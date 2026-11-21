@@ -1,0 +1,217 @@
+<title>Розсилка для учня</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: one reading column, numbered step cards, two reference tables. */
+:root {
+  --bg: #f7f8fa; --surface: #ffffff; --fg: #17202a; --muted: #5b6672;
+  --line: #d9dee5; --accent: #0b6e99; --accent-soft: #e3f1f8;
+  --warn-bg: #fff4e0; --warn-fg: #7a4b00; --ok: #1f7a4d;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-head: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151b; --surface: #171f27; --fg: #e8edf2; --muted: #9aa7b4;
+  --line: #2a3542; --accent: #5cb8e0; --accent-soft: #15303f;
+  --warn-bg: #3a2a08; --warn-fg: #ffd58a; --ok: #5fcf93; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #171f27; --fg: #e8edf2; --muted: #9aa7b4;
+  --line: #2a3542; --accent: #5cb8e0; --accent-soft: #15303f;
+  --warn-bg: #3a2a08; --warn-fg: #ffd58a; --ok: #5fcf93; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 64px; }
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--font-head); text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 2rem; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; }
+.lead { color: var(--muted); font-size: 1.05rem; }
+.facts { display: flex; flex-wrap: wrap; gap: 10px 24px; color: var(--muted); font-size: .95rem; }
+.facts b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 12px; min-width: 0; }
+.step header { display: flex; gap: 14px; align-items: baseline; }
+.num { font-family: var(--font-head); font-weight: 700; color: var(--accent); font-size: 1.1rem; min-width: 2.2em; }
+.time { color: var(--muted); font-size: .9rem; margin-left: auto; white-space: nowrap; }
+ol, ul { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.check { list-style: none; padding: 0; }
+.check li::before { content: "☐ "; color: var(--accent); }
+.warn { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 12px 14px; }
+.note { background: var(--accent-soft); border-radius: 8px; padding: 12px 14px; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--accent-soft); padding: 14px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; margin: 0; }
+pre code { background: none; padding: 0; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: .85rem; letter-spacing: .03em; text-transform: uppercase; }
+td b.req { color: var(--ok); }
+a { color: var(--accent); }
+.caps { text-transform: uppercase; letter-spacing: .05em; font-size: .78rem; color: var(--muted); font-weight: 500; }
+@media (max-width: 480px) { h1 { font-size: 1.6rem; } .step { padding: 16px; } .time { display: none; } }
+</style>
+<main>
+  <section>
+    <p class="caps">Інструкція для учня</p>
+    <h1>Розсилка в Telegram-групи</h1>
+    <p class="lead">Програма сама, кожні 2 години, вдень і вночі, надсилає твоє оголошення у 81 Telegram-групу, де сидять моделі. Програмувати нічого не треба: усе ставить AI-помічник Claude. Твоя робота — сервер, Telegram-акаунт і чотири значення для помічника.</p>
+    <div class="facts"><span>Сервер: <b>4–6 € / міс</b></span><span>Telegram Premium на акаунт розсилки</span><span>Твоєї уваги: <b>~1 година</b></span><span>Автоматичний вступ у групи: <b>~5 годин</b></span></div>
+  </section>
+
+  <section class="step">
+    <h2>Що треба мати</h2>
+    <ul class="check">
+      <li>Сервер → <b>IP-адреса</b> і <b>пароль</b> (крок 1)</li>
+      <li>Telegram-акаунт для розсилки з <b>Premium</b> (крок 2)</li>
+      <li><b>api_id</b> і <b>api_hash</b> (крок 3)</li>
+      <li><b>Твій особистий Telegram id</b> + одне повідомлення акаунту розсилки (крок 4)</li>
+      <li>Програма Claude на комп'ютері (крок 5)</li>
+      <li>Посилання на комплект (крок 6, вже є тут)</li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <header><span class="num">1</span><h2>Купити сервер</h2><span class="time">10 хвилин</span></header>
+    <p>Сервер — комп'ютер у дата-центрі, який не вимикається. Потрібен найдешевший. На що дивитись у характеристиках:</p>
+    <div class="tbl"><table>
+      <tr><th>Що</th><th>Яке треба</th><th>Пояснення</th></tr>
+      <tr><td>Процесор (CPU, vCPU, ядра)</td><td><b class="req">1 або 2</b></td><td>більше не потрібно</td></tr>
+      <tr><td>Пам'ять (RAM)</td><td><b class="req">1 або 2 ГБ</b></td><td>достатньо</td></tr>
+      <tr><td>Диск (SSD, NVMe)</td><td><b class="req">від 10 ГБ</b></td><td>будь-який</td></tr>
+      <tr><td>Система (OS, Image)</td><td><b class="req">Ubuntu 24.04</b></td><td>саме Ubuntu, не Windows і не Debian (22.04 також підходить)</td></tr>
+      <tr><td>Країна (Location)</td><td><b class="req">Німеччина</b></td><td>або будь-яка Європа</td></tr>
+      <tr><td>Тип</td><td>VPS / Cloud Server / KVM</td><td>це одне й те саме</td></tr>
+    </table></div>
+    <h3>Варіант A — LuxVPS (luxvps.net)</h3>
+    <p>Франкфурт. Приймає картку, PayPal і крипту (USDT) — підходить, якщо картка не проходить.</p>
+    <ol>
+      <li>Зареєструйся (пошта + пароль).</li>
+      <li>VPS → найдешевший план (1–2 ядра, 1–4 ГБ).</li>
+      <li>Operating System: <b>Ubuntu 24.04</b>.</li>
+      <li>Оплати. На пошту прийде лист з <b>IP Address</b> і <b>Root Password</b>. Збережи обидва.</li>
+    </ol>
+    <h3>Варіант B — Hetzner (hetzner.com → Cloud)</h3>
+    <p>Дуже надійний, але просить підтвердити особу (фото документа) і приймає лише картку або PayPal.</p>
+    <ol>
+      <li>Зареєструйся в Hetzner Cloud, пройди перевірку.</li>
+      <li>Add Server → Location: Nuremberg або Falkenstein → Image: <b>Ubuntu 24.04</b> → Type: Shared vCPU → найменший доступний (CX23 або CPX11) → Create &amp; Buy now.</li>
+      <li><b>IP</b> з'явиться на екрані, <b>пароль root</b> прийде на пошту.</li>
+    </ol>
+    <p class="note">На сервері нічого не роби сам. Усе, що треба, зробить помічник.</p>
+  </section>
+
+  <section class="step">
+    <header><span class="num">2</span><h2>Telegram-акаунт для розсилки</h2><span class="time">15 хвилин</span></header>
+    <ul>
+      <li><b>Окремий номер</b>, не твій основний. З нього підуть оголошення, і його можуть заблокувати — такий ризик у цього інструменту завжди.</li>
+      <li>Акаунту краще бути <b>старшим за місяць</b>. Якщо новий — заповни профіль (назва агенції, фото, опис), попользуйся кілька днів, потім запускай.</li>
+      <li>Увімкни <b>Telegram Premium</b>. Без нього розсилка не стартує.</li>
+      <li>Увімкни хмарний пароль: Налаштування → Конфіденційність → Хмарний пароль. Запам'ятай його.</li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <header><span class="num">3</span><h2>api_id і api_hash</h2><span class="time">5 хвилин</span></header>
+    <p>Це «ключ», який дозволяє програмі працювати від імені акаунта.</p>
+    <ol>
+      <li>Відкрий <a href="https://my.telegram.org">my.telegram.org</a> <b>з номера акаунта розсилки</b>.</li>
+      <li>Введи номер → у Telegram прийде код → введи.</li>
+      <li>Натисни <b>API development tools</b>.</li>
+      <li>App title: <code>broadcast</code>, Short name: <code>broadcast</code>, Platform: Other → <b>Create application</b>.</li>
+      <li>Скопіюй <b>App api_id</b> (число) і <b>App api_hash</b> (довгий рядок). Нікому їх не показуй, крім помічника.</li>
+    </ol>
+    <p class="warn">Сайт пише просто ERROR? Вимкни VPN, відкрий сайт у приватному вікні, спробуй з мобільного інтернету замість Wi-Fi. На один акаунт дозволений один ключ — якщо вже створював, він просто відкриється.</p>
+  </section>
+
+  <section class="step">
+    <header><span class="num">4</span><h2>Твій особистий Telegram id</h2><span class="time">2 хвилини</span></header>
+    <ol>
+      <li>Зі <b>свого основного</b> акаунта напиши боту <b>@userinfobot</b> будь-що. Він відповість <code>Id: 123456789</code>. Це число — твій id. Сюди прийдуть нові ліди, попередження і тижневий звіт.</li>
+      <li>Зі <b>свого основного</b> акаунта напиши <b>акаунту розсилки</b> будь-яке слово, наприклад «старт». Поки ти йому не написав, Telegram не дозволить йому писати тобі.</li>
+    </ol>
+  </section>
+
+  <section class="step">
+    <header><span class="num">5</span><h2>Поставити помічника</h2><span class="time">5 хвилин</span></header>
+    <ol>
+      <li>Завантаж програму Claude для комп'ютера: <a href="https://claude.ai/download">claude.ai/download</a> (Mac або Windows).</li>
+      <li>Увійди у свій акаунт Claude (потрібна підписка).</li>
+      <li>Відкрий вкладку <b>Code</b> — це помічник, з яким ти говориш як у чаті.</li>
+    </ol>
+    <p class="note">Хвилюєшся, що не впораєшся? Помічник може дивитись твій екран і підказувати, куди натиснути. Напиши йому «подивись мій екран і підкажи» — він попросить дозвіл, ти натиснеш <b>Дозволити</b>. Можна також поставити розширення Claude для Chrome, тоді він бачить сайти разом з тобою. Паролі, коди й оплату ти завжди вводиш сам.</p>
+  </section>
+
+  <section class="step">
+    <header><span class="num">6</span><h2>Посилання на комплект</h2></header>
+    <p>Комплект лежить тут: <a href="https://github.com/dovguu20/tg-broadcast-kit"><b>github.com/dovguu20/tg-broadcast-kit</b></a></p>
+    <p>Нічого скачувати, реєструватись чи розпаковувати не треба. Посилання вже є в повідомленні для помічника нижче — він скачає все сам.</p>
+  </section>
+
+  <section class="step">
+    <header><span class="num">7</span><h2>Одне повідомлення помічнику</h2></header>
+    <p>Скопіюй і відправ у вкладці Code:</p>
+<pre><code>Ось комплект розсилки: https://github.com/dovguu20/tg-broadcast-kit
+Скачай його, прочитай у ньому SETUP.md і встанови мені розсилку по цій інструкції.
+Я не програміст: веди мене за руку простими словами і сам питай усе, що тобі потрібно.</code></pre>
+    <p>Агент сам спитає IP сервера, api_id, api_hash і твій Telegram id — відповідай йому в чаті.</p>
+    <p class="warn">Пароль від сервера і коди з Telegram у чат <b>не пиши</b>. Помічник сам скаже, коли і де їх ввести, і в той момент символи не буде видно на екрані. Це нормально.</p>
+  </section>
+
+  <section class="step">
+    <header><span class="num">8</span><h2>Що буде далі</h2><span class="time">помічник веде сам</span></header>
+    <ol>
+      <li>Попросить один раз ввести пароль від сервера у чорному віконці (термінал).</li>
+      <li>Поставить програму на сервер (1–3 хвилини).</li>
+      <li>Попросить номер акаунта розсилки, потім код із Telegram, потім хмарний пароль.</li>
+      <li>Попросить написати два тексти оголошення (крок 9) і надіслати їх собі у «Збережені».</li>
+      <li>Запустить вступ у 81 групу — це ~5 годин, можна відійти від комп'ютера.</li>
+      <li>Зробить пробну розсилку на 3 групи і покаже результат.</li>
+      <li>Увімкне автоматику. Далі все само, кожні 2 години.</li>
+    </ol>
+  </section>
+
+  <section class="step">
+    <header><span class="num">9</span><h2>Тексти оголошень</h2></header>
+    <p>У папці <code>texts</code> два зразки: <code>A.txt</code> і <code>B.txt</code>. Розсилка чергує їх: один раз A, наступний B.</p>
+    <ol>
+      <li>Заміни <code>НАЗВА_АГЕНЦІЇ</code> на свою, підправ цифри й умови. <b>Перепиши своїми словами.</b> Якщо десять людей шлють у ті самі групи однаковий текст, адміни банять усіх.</li>
+      <li>З телефону відкрий чат <b>«Збережені»</b> (Saved Messages) і надішли собі <b>спочатку B, потім A</b>, двома окремими повідомленнями.</li>
+    </ol>
+    <p class="warn">Більше нічого собі у «Збережені» не надсилай — ні фото, ні нотаток. Розсилка бере два найновіші повідомлення звідти і шле їх у групи, що б там не лежало. Хочеш змінити текст — надішли собі новий, і все.</p>
+  </section>
+
+  <section class="step">
+    <h2>Як зрозуміти, що працює</h2>
+    <ul>
+      <li>Кожні 2 години (о парних годинах за Києвом) у групах з'являються твої пости. Зайди в будь-яку групу зі списку і подивись.</li>
+      <li>Коли хтось напише в акаунт розсилки, тобі на особистий прийде «🔔 Новий лід на …: ім'я — текст», а людині піде автоматична перша відповідь. <b>Далі відповідаєш ти сам, з акаунта розсилки.</b></li>
+      <li>Щопонеділка об 11:05 — звіт: скільки написали, скільком не відповів, як довго чекали.</li>
+      <li>Спитай помічника «покажи лог розсилки» — він подивиться й розкаже.</li>
+    </ul>
+    <p class="note">Нормально, що не всі 81 група отримують пост: десь немає прав писати, десь «добове вікно». 55–70 доставок із 81 — звичайний результат.</p>
+  </section>
+
+  <section class="step">
+    <h2>Якщо прийшло повідомлення</h2>
+    <div class="tbl"><table>
+      <tr><th>Що прийшло</th><th>Що це значить</th><th>Що робити</th></tr>
+      <tr><td>⚠️ @SpamBot: обмеження…</td><td>Telegram тимчасово обмежив акаунт</td><td>3–7 днів нічого не постити (розсилка сама зупиниться і продовжить). Напиши @SpamBot з акаунта розсилки, що це помилка</td></tr>
+      <tr><td>⚠️ Telegram Premium закінчився</td><td>скінчилась підписка</td><td>Поновити Premium; розсилка сама продовжить</td></tr>
+      <tr><td>⚠️ Розсилка: лише N доставок</td><td>більшість груп не прийняла пост</td><td>Якщо повторюється 2–3 рази — спитати помічника «подивись, чому мало доставок»</td></tr>
+      <tr><td>⛔️ Розсилка стоїть</td><td>програма не відпрацювала понад 4 години</td><td>Написати помічнику «подивись cron.log і полагодь»</td></tr>
+      <tr><td>⛔️ Розсилка УПАЛА</td><td>програма впала з помилкою</td><td>Те саме</td></tr>
+    </table></div>
+  </section>
+
+  <section class="step">
+    <h2>Чого не робити</h2>
+    <ul>
+      <li>Не слати собі у «Збережені» нічого, крім оголошень.</li>
+      <li>Не заходити на сервер і не чіпати там файли без помічника.</li>
+      <li>Не запускати цей же акаунт у другій програмі для розсилки одночасно.</li>
+      <li>Не пересилати нікому файли <code>.env</code> і <code>*.session</code> — це повний доступ до акаунта.</li>
+      <li>Не пришвидшувати паузи і не додавати груп «щоб більше». Налаштування такі, як у робочих акаунтів, що працюють місяцями.</li>
+    </ul>
+  </section>
+</main>

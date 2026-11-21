@@ -1,0 +1,13 @@
+# Секрети і стан — ніколи не в git
+.env
+*.session
+*.session-journal
+.*_sender*
+venv/
+__pycache__/
+*.log
+*.json
+*_state.txt
+ab_state.txt
+joined_done.txt
+leads_seen.json
