@@ -1,5 +1,5 @@
-0 */2 * * * cd DIR && flock -n DIR/broadcast.lock DIR/venv/bin/python broadcast.py >> DIR/cron.log 2>&1 # tg-broadcast-kit
-3-58/5 * * * * flock -n DIR/lead_reply.lock DIR/venv/bin/python DIR/lead_reply.py >> DIR/lead_reply.log 2>&1 # tg-broadcast-kit
-15 * * * * DIR/venv/bin/python DIR/broadcast_watchdog.py >> DIR/watchdog.log 2>&1 # tg-broadcast-kit
-45 1 * * * DIR/venv/bin/python DIR/spamcheck.py >> DIR/spamcheck.log 2>&1 # tg-broadcast-kit
-5 11 * * 1 DIR/venv/bin/python DIR/leads_report.py 7 >> DIR/leads_report.log 2>&1 # tg-broadcast-kit
+0 */2 * * * cd DIR && umask 077 && flock -n DIR/session.lock timeout 7000 DIR/venv/bin/python broadcast.py >> DIR/cron.log 2>&1 # tg-broadcast-kit
+3-58/5 * * * * cd DIR && umask 077 && flock -n DIR/session.lock DIR/venv/bin/python lead_reply.py >> DIR/lead_reply.log 2>&1 # tg-broadcast-kit
+15 * * * * cd DIR && umask 077 && DIR/venv/bin/python broadcast_watchdog.py >> DIR/watchdog.log 2>&1 # tg-broadcast-kit
+45 1 * * * cd DIR && umask 077 && flock -w 3600 DIR/session.lock DIR/venv/bin/python spamcheck.py >> DIR/spamcheck.log 2>&1 # tg-broadcast-kit
+5 11 * * 1 cd DIR && umask 077 && flock -w 3600 DIR/session.lock DIR/venv/bin/python leads_report.py 7 >> DIR/leads_report.log 2>&1 # tg-broadcast-kit

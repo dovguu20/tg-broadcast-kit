@@ -20,7 +20,8 @@ async def main():
         return
     done = set(open(DONE).read().split()) if os.path.exists(DONE) else set()
     todo = [t for t in TARGETS if t.lower() not in done]
-    cl, cp = k.client("join")
+    # Живий файл сесії: кеш груп лишається для розсилки. Викликати лише під session.lock (join_step.sh).
+    cl, cp = k.client("join", live=os.environ.get("KIT_SESSION_LOCKED") == "1")
     await cl.connect()
     try:
         me = await cl.get_me()

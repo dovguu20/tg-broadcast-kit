@@ -63,7 +63,7 @@ async def run(login=False, base=BASE):
             str(base / session), api_id, api_hash,
             device_model="broadcast kit",
             system_version=f"{platform.system()} {platform.release()}",
-            app_version="1.0", request_retries=0,
+            app_version="1.0", request_retries=2,  # 2: PHONE_MIGRATE — перехід на DC номера
             connection_retries=1, flood_sleep_threshold=0,
         )
         try:

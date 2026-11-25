@@ -15,13 +15,21 @@ ask() { local v; while :; do read -r -p "  > " v </dev/tty; v=${v//[[:space:]]/}
 pause() { read -r -p "  $1" _ </dev/tty; }
 
 [ "$(id -u)" = 0 ] || { echo "Запусти від root: спочатку ssh root@IP_сервера"; exit 1; }
+umask 077   # логи й стан із даними лідів — лише для root
+exec 7>/root/.tg-broadcast-setup.lock
+flock -n 7 || { echo "Майстер уже запущено в іншому вікні. Закрий зайве вікно і користуйся одним."; exit 1; }
 
 say "=== Установка розсилки ==="
 say "Крок 1/6. Ставлю потрібні програми (1–3 хвилини)..."
 export DEBIAN_FRONTEND=noninteractive
 # Свіжий сервер перші хвилини сам оновлюється і тримає apt — чекаємо до 10 хв, а не падаємо.
-apt-get -o DPkg::Lock::Timeout=600 update -qq >/dev/null && apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null
-if [ -d "$DIR/.git" ]; then git -C "$DIR" pull -q --ff-only 2>/dev/null || echo "  (оновлення комплекту пропущено, працюю з тим, що є)"
+for i in $(seq 1 40); do apt-get update -qq >/dev/null 2>&1 && break
+  [ "$i" = 1 ] && echo "  Сервер ще сам оновлюється — чекаю (до 10 хвилин)..."; sleep 15; done
+apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null
+if [ -d "$DIR/.git" ]; then
+  # Оновлення комплекту. Налаштування, вхід і стан (.env, *.session, *.json) git не чіпає.
+  git -C "$DIR" fetch -q origin main && git -C "$DIR" reset -q --hard origin/main \
+    || { echo "  Не вдалось оновити комплект з GitHub (інтернет на сервері?). Спробуй ще раз за хвилину."; exit 1; }
 else
   rm -rf "$DIR.tmp"   # недокачана копія з минулої спроби
   git clone -q "$REPO" "$DIR.tmp"
@@ -31,7 +39,7 @@ fi
 cd "$DIR"
 # Поки йде прогін розсилки, акаунт не чіпаємо (дві програми на одному акаунті рвуть з'єднання).
 # Розклад запускає розсилку під цим самим замком — поки майстер працює, вона просто пропустить свій час.
-exec 8>broadcast.lock
+exec 8>session.lock
 if ! flock -n 8; then
   echo "  Зараз іде розсилка (до ~50 хв). Чекаю, поки закінчиться, — вікно не закривай..."
   flock 8
@@ -83,18 +91,27 @@ else
   echo "  Код зазвичай приходить у сам Telegram на телефоні з цим акаунтом; куди саме —"
   echo "  програма напише нижче (Telegram / SMS / дзвінок). Символи не видно — це нормально."
   until venv/bin/python login_phone.py --login </dev/tty 2>&1 | tee /tmp/broadcast-login.log \
-          | { grep --line-buffered "SentCodeType" || true; } | sed -u \
-            -e '/SentCodeType/!d' -e 's/.*SentCodeTypeApp.*/  → Код прийде в Telegram (чат «Telegram» на телефоні)./' \
-            -e 's/.*SentCodeTypeSms.*/  → Код прийде в SMS./' -e 's/.*SentCodeTypeCall.*/  → Код продиктують дзвінком./' \
-            -e 's/.*SentCodeType\(Flash\|Missed\)Call.*/  → Telegram подзвонить; код — останні цифри номера, що дзвонив./' \
+          | { grep --line-buffered '"delivery_selected"' || true; } | sed -u \
+            -e 's/.*"delivery": "SentCodeTypeApp".*/  → Код прийде в Telegram (чат «Telegram» на телефоні)./' \
+            -e 's/.*"delivery": "SentCodeTypeSms.*/  → Код прийде в SMS./' \
+            -e 's/.*"delivery": "SentCodeTypeCall".*/  → Код продиктують дзвінком./' \
+            -e '/"delivery"/d' \
         && venv/bin/python check_account.py 2>/dev/null | grep -q "authorized=true"; do
-    echo "  Вхід не вдався. Причина:"
-    { grep -o '"error": "[A-Za-z]*"\|retry_after_seconds": [0-9]*\|Invalid TELEGRAM_[A-Z_]*\|вже запущено' \
-        /tmp/broadcast-login.log || tail -2 /tmp/broadcast-login.log; } | tail -3 | sed 's/^/    /' || true
-    echo "  ApiIdInvalid / Invalid TELEGRAM_API — помилка в api_id чи api_hash."
-    echo "  retry_after_seconds — Telegram просить почекати стільки секунд."
-    read -r -p "  Enter — спробувати ще раз;  напиши 'ключі' — ввести api_id і api_hash заново: " a </dev/tty
-    [[ $a == ключі || $a == ключи || $a == keys ]] && ask_keys
+    L=/tmp/broadcast-login.log
+    echo "  Вхід не вдався."
+    if grep -q 'ApiIdInvalid\|Invalid TELEGRAM_API' $L; then echo "  Помилка в api_id чи api_hash — введи їх заново (напиши 'ключі')."
+    elif grep -q 'invalid_phone_format' $L; then echo "  Номер треба вводити з плюсом і кодом країни, без пробілів: +380501234567."
+    elif grep -q 'PhoneNumberInvalid\|PhoneNumberBanned\|PhoneNumberUnoccupied' $L; then echo "  Telegram не приймає цей номер. Перевір номер акаунта розсилки."
+    elif grep -q 'PhoneCodeInvalid\|PhoneCodeExpired\|code_not_received' $L; then echo "  Код неправильний або застарів. Спробуй ще раз — прийде новий."
+    elif grep -q 'PasswordHashInvalid' $L; then echo "  Неправильний хмарний пароль акаунта розсилки."
+    elif grep -q 'rate_limited' $L; then echo "  Telegram просить почекати $(grep -o 'retry_after_seconds": [0-9]*' $L | grep -o '[0-9]*$' | tail -1) секунд перед новою спробою."
+    elif grep -q 'окремого підтримуваного\|unsupported_auth_response' $L; then
+      echo "  Telegram вибрав спосіб входу, який майстер не вміє (пошта, дзвінок-скидання тощо)."
+      echo "  Зроби скрін цього вікна і надішли Максу."; exit 1
+    elif grep -q 'вже запущено' $L; then echo "  Вхід уже запущено в іншому вікні — закрий його."
+    else echo "  Деталі:"; tail -2 $L | sed 's/^/    /'; fi
+    read -r -p "  Enter — спробувати ще раз;  'ключі' (або k) — ввести api_id і api_hash заново: " a </dev/tty
+    [[ $a == ключі || $a == ключи || $a == keys || $a == k || $a == K ]] && ask_keys
   done
 fi
 ACCT=$(venv/bin/python check_account.py)
@@ -120,6 +137,7 @@ while :; do
   pause "Коли написав — натисни Enter..."
   rc=0; venv/bin/python wizard_check.py owner || rc=$?
   [ $rc = 0 ] && { ok "бачу твоє повідомлення"; break; }
+  [ $rc = 3 ] && { echo "  Не вдалось перевірити (зв'язок із Telegram). Спробуй ще раз через хвилину."; continue; }
   [ $rc = 2 ] && { echo "  Ти вказав id самого акаунта розсилки, а треба свій особистий."
                    echo "  Введи правильний — свій особистий id від @userinfobot:"
                    ask OWNER '^[0-9]{5,15}$'; setenv OWNER_ID "$OWNER"; continue; }
@@ -139,12 +157,14 @@ while :; do
   if ! venv/bin/python wizard_check.py saved; then
     echo "  Потрібно два повідомлення в «Збережених». Надішли тексти (спочатку B, потім A)."; continue
   fi
-  read -r -p "  Це твої оголошення? (так/ні) " yn </dev/tty
-  [[ $yn =~ ^(так|Так|ТАК|да|Да|y|Y|yes|Yes|т|д)$ ]] && break
+  read -r -p "  Це твої оголошення? (так/ні, або y/n) " yn </dev/tty
+  [[ $yn =~ ^(так|Так|ТАК|да|Да|y|Y|yes|Yes|т|д|1|nfr)$ ]] && break
   echo "  Тоді надішли собі у «Збережені» правильні тексти (спочатку B, потім A)."
 done
 ok "тексти на місці"
-if venv/bin/python lead_reply.py --seed >/dev/null 2>&1 && [ -f leads_seen.json ]; then
+if [ -f leads_seen.json ]; then
+  ok "авто-відповідь лідам уже налаштована"   # повторний seed проковтнув би нових лідів
+elif venv/bin/python lead_reply.py --seed >/dev/null 2>&1 && [ -f leads_seen.json ]; then
   ok "старі чати запам'ятовано (авто-відповідь їх не чіпатиме)"
 else
   echo "  (старі чати запам'ятаю пізніше, автоматично)"
@@ -152,13 +172,22 @@ fi
 
 say "Крок 6/6. Вступ у групи і запуск"
 chmod +x join_step.sh
+if crontab -l 2>/dev/null | grep -q "broadcast.py.*# tg-broadcast-kit"; then
+  bash install.sh --cron >/dev/null   # розклад уже був — просто оновлюємо його до свіжої версії
+  ok "розсилка вже працює за розкладом"
+  say "Готово! Все перевірено, розсилка працює. Це вікно можна закрити."
+  exit 0
+fi
+[ -f join.log ] && { echo "  Як іде вступ у групи (останні рядки):"; grep "вступив\|зупинено\|ПРОЙДЕНО" join.log | tail -2 | sed 's/^/    /' || true; }
 { crontab -l 2>/dev/null | grep -v "# tg-join-temp" || true
   echo "7 * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
-if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh 8>&- >/dev/null 2>&1 & fi
+flock -u 8; exec 8>&-   # відпускаємо акаунт, щоб вступ у групи міг почати одразу
+if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 & fi
 ok "вступ у групи запущено"
 
 say "Готово!"
-echo "  Зараз акаунт вступає в групи — партіями, з паузами, приблизно 5 годин."
+echo "  Зараз акаунт вступає в групи — партіями, з паузами. Зазвичай це ~5 годин;"
+echo "  якщо Telegram попросить паузу — до 2–3 днів, майстер почекає сам."
 echo "  Коли закінчить, розсилка ввімкнеться сама, а тобі в Telegram прийде"
 echo "  повідомлення «✅ Акаунт вступив у групи, розсилка увімкнена»."
 echo "  Далі пости йдуть кожні 2 години. Це вікно можна закрити."

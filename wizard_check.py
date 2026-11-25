@@ -37,4 +37,10 @@ async def main(mode: str) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(sys.argv[1])))
+    try:
+        sys.exit(asyncio.run(main(sys.argv[1])))
+    except SystemExit:
+        raise
+    except Exception as err:  # мережа / сесія — це не «ти ще не написав»
+        print(f"  (перевірка не вдалась: {type(err).__name__})")
+        sys.exit(3)

@@ -21,18 +21,36 @@ CHAT = CFG.get("REPORT_CHAT_ID") or ""
 def broadcast_running() -> bool:
     """Поки іде прогін, сесію не чіпає більше ніхто: дві сесії на одному auth key —
     Telegram рве з'єднання розсилки («account is likely misusing the session»)."""
-    return subprocess.run(["pgrep", "-f", r"broadcast\.py"], capture_output=True).returncode == 0
+    # Саме процес розсилки (а не редактор чи tail, у яких у рядку теж є «broadcast.py»).
+    return subprocess.run(["pgrep", "-f", r"venv/bin/python broadcast\.py"], capture_output=True).returncode == 0
 
 
-def client(tag: str):
-    """Клієнт на КОПІЇ файла сесії (живий файл відкриває лише broadcast.py). -> (client, копія)."""
+def client(tag: str, live: bool = False):
+    """Клієнт на КОПІЇ файла сесії -> (client, копія). live=True — на самому файлі сесії
+    (лише під session.lock, коли розсилка точно не йде: так Telegram-кеш груп лишається
+    в сесії і перший прогін не резолвить 81 юзернейм заново)."""
     api_id, api_hash = int(CFG["TELEGRAM_API_ID"]), CFG["TELEGRAM_API_HASH"]  # до копії: щоб не лишати її при поганому .env
+    if live:
+        return TelegramClient(os.path.join(BASE_DIR, SESSION), api_id, api_hash, receive_updates=False), None
     cp = os.path.join(BASE_DIR, f".{tag}_{SESSION}")
     shutil.copy(os.path.join(BASE_DIR, SESSION + ".session"), cp + ".session")
     return TelegramClient(cp, api_id, api_hash, receive_updates=False), cp
 
 
-def cleanup(cp: str) -> None:
+def save_json(path: str, data) -> None:
+    """Атомарний запис: обрив чи перезавантаження посеред запису не лишить порожній файл."""
+    import json
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def cleanup(cp) -> None:
+    if not cp:
+        return
     for suffix in (".session", ".session-journal"):
         try:
             os.remove(cp + suffix)

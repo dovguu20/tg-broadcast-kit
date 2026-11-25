@@ -25,7 +25,7 @@ async def report(cl) -> str:
         if human:
             lags.append((human.date - msgs[0].date).total_seconds() / 3600)
         name = f"{e.first_name or ''} {e.last_name or ''}".strip()
-        lines.append(f"  {msgs[0].date:%d.%m} {name}{' @' + e.username if e.username else ''} — "
+        lines.append(f"  {msgs[0].date.astimezone():%d.%m} {name}{' @' + e.username if e.username else ''} — "
                      f"{'відп. ' + format(lags[-1], '.1f') + ' год' if human else 'БЕЗ ВІДПОВІДІ'}")
     head = f"{k.BRAND}: лідів {leads}, без відповіді {leads - len(lags)}"
     if lags:

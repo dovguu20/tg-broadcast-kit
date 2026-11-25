@@ -22,10 +22,17 @@ async def main():
     try:
         me = await cl.get_me()
         who = getattr(me, "username", None) or me.first_name
-        await cl.send_message("SpamBot", "/start")
-        await asyncio.sleep(8)
-        msgs = await cl.get_messages("SpamBot", limit=3)
-        reply = next((m.message for m in msgs if m.message and not m.out), "").strip()
+        sent = await cl.send_message("SpamBot", "/start")
+        reply = ""
+        for _ in range(6):  # чекаємо відповідь саме на цей /start, а не стару
+            await asyncio.sleep(5)
+            msgs = await cl.get_messages("SpamBot", limit=3, min_id=sent.id)
+            reply = next((m.message for m in msgs if m.message and not m.out), "").strip()
+            if reply:
+                break
+        if not reply:
+            print(f"{who}: @SpamBot не відповів — перевірку пропускаю (це не обмеження)")
+            return
         clean = any(m in reply.lower() for m in OK_MARKS)
         print(f"{who}: {'чисто' if clean else 'ОБМЕЖЕННЯ'} | {reply[:120]}")
         if clean:
@@ -38,7 +45,8 @@ async def main():
         except Exception:
             pass
         await k.alert(cl, f"⚠️ @SpamBot: обмеження на акаунті {who}\n\n{reply[:600]}\n\n"
-                          "Нічого не постити кілька днів і написати @SpamBot, що це помилка.")
+                          "Обмеження зазвичай знімається саме за кілька днів. Напиши @SpamBot з акаунта "
+                          "розсилки, що це помилка. Розсилка тим часом працює далі, просто частина постів не пройде.")
         open(STATE, "w").write(sig)  # лише після успішної відправки
     finally:
         await cl.disconnect()

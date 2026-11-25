@@ -213,10 +213,16 @@ async def main() -> None:
     # Беремо останні AB_COUNT повідомлень зі 'Збережених'.
     # limit повертає від найновішого до старішого: [0]=найновіше (A), [1]=наступне (B)...
     saved = await client.get_messages("me", limit=AB_COUNT)
-    if not saved:
-        log.error("У 'Збережених' немає повідомлень — нема що пересилати.")
+    if len(saved) < AB_COUNT:
+        log.error("У 'Збережених' %d повідомлень, а треба %d (A і B) — розсилку пропущено.", len(saved), AB_COUNT)
+        try:
+            await alert(client, f"⚠️ Розсилка: у «Збережених» акаунта {len(saved)} повідомлень, а треба {AB_COUNT}. "
+                                "Надішли собі туди оголошення: спочатку B, потім A.")
+        except Exception:
+            log.exception("Не вдалось надіслати тривогу про «Збережені»")
         await client.disconnect()
-        raise SystemExit(1)
+        log.info("=== ФІНІШ | пропущено: у «Збережених» нема двох оголошень ===")
+        return
 
     variants = list(saved)  # variants[0]=A (найновіше), variants[1]=B, ...
 
@@ -349,10 +355,6 @@ async def main() -> None:
         was_zero = False
     now_zero = sent < LOW_DELIVERY and len(targets) >= 20
     if now_zero != was_zero:
-        try:
-            open(zero_path, "w").write("zero" if now_zero else "ok")
-        except Exception:
-            pass
         who = getattr(me, "username", None) or getattr(me, "first_name", "?")
         text = (f"\u26a0\ufe0f Розсилка {who}: лише {sent} доставок зі {len(targets)} груп "
                 f"(норма від {LOW_DELIVERY}). Схоже на флуд-таймер або бан — перевір @SpamBot."
@@ -360,6 +362,7 @@ async def main() -> None:
                 f"\u2705 Розсилка {who} відновилась: {sent} зі {len(targets)}.")
         try:
             await alert(client, text)
+            open(zero_path, "w").write("zero" if now_zero else "ok")  # лише після успішної тривоги
         except Exception:
             log.exception("Не вдалось надіслати алерт про нульову доставку")
 

@@ -50,7 +50,7 @@ td b.req { color: var(--ok); }
 a { color: var(--accent); }
 .caps { text-transform: uppercase; letter-spacing: .05em; font-size: .78rem; color: var(--muted); font-weight: 500; }
 @media (max-width: 480px) { h1 { font-size: 1.6rem; } .step { padding: 16px; } .time { display: none; } }
-@media print { pre { white-space: pre; overflow-wrap: normal; font-size: 8.5px; } }
+@media print { pre { white-space: pre; overflow-wrap: normal; font-size: 8.5px; break-inside: avoid; } tr, .tbl, li { break-inside: avoid; } }
 </style>
 <main>
 <section>
@@ -104,7 +104,7 @@ a { color: var(--accent); }
 <section class="step">
 <header><span class="num">6</span><h2>Відкрити Термінал</h2><span class="time">1 хвилина</span></header>
 <p>Термінал — це віконце, куди вставляють команди. Він уже є на твоєму комп'ютері.</p>
-<ul><li><b>Mac:</b> натисни <code>Cmd + Пробіл</code>, напиши <code>Термінал</code> (або <code>Terminal</code>), натисни Enter.</li><li><b>Windows:</b> натисни кнопку «Пуск», напиши <code>PowerShell</code>, відкрий <b>Windows PowerShell</b>. Перевір, що там є програма для підключення: встав <code>ssh -V</code> і натисни Enter. Якщо відповідь починається з <code>OpenSSH</code> — все добре. Якщо пише, що <code>ssh</code> не знайдено: відкрий PowerShell <b>від імені адміністратора</b> (правою кнопкою → «Запуск від імені адміністратора»), встав <code>Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0</code>, дочекайся кінця і відкрий PowerShell заново.</li></ul>
+<ul><li><b>Mac:</b> натисни <code>Cmd + Пробіл</code>, напиши <code>Термінал</code> (або <code>Terminal</code>), натисни Enter.</li><li><b>Windows:</b> натисни кнопку «Пуск», напиши <code>PowerShell</code>, відкрий <b>Windows PowerShell</b>. Перевір, що там є програма для підключення: встав <code>ssh -V</code> і натисни Enter. Якщо відповідь починається з <code>OpenSSH</code> — все добре. Якщо пише, що <code>ssh</code> не знайдено: відкрий PowerShell <b>від імені адміністратора</b> (правою кнопкою → «Запуск від імені адміністратора»), встав цей рядок і натисни Enter:<pre><code>Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0</code></pre>Дочекайся кінця і відкрий звичайний PowerShell заново.</li></ul>
 <p>Як вставляти текст у Термінал: <b>Mac</b> — <code>Cmd + V</code>; <b>Windows</b> — клік правою кнопкою миші.</p>
 </section>
 
@@ -126,7 +126,8 @@ a { color: var(--accent); }
 
 <section class="step">
 <h2>Що буде далі</h2>
-<ol><li>Акаунт сам вступає в 81 групу — партіями, з паузами, <b>приблизно 5 годин</b>.</li><li>Коли закінчить, розсилка вмикається сама, а тобі в Telegram приходить <b>«✅ Акаунт вступив у групи, розсилка увімкнена»</b>.</li><li>Далі пости йдуть кожні 2 години, вдень і вночі. Комп'ютер можна вимкнути — усе працює на сервері.</li></ol>
+<ol><li>Акаунт сам вступає в 81 групу — партіями, з паузами, <b>зазвичай ~5 годин</b>. Якщо Telegram попросить паузу, майстер сам почекає добу і продовжить — тоді вступ займе 2–3 дні.</li><li>Коли закінчить, розсилка вмикається сама, а тобі в Telegram приходить <b>«✅ Акаунт вступив у групи, розсилка увімкнена»</b>.</li><li>Далі пости йдуть кожні 2 години, вдень і вночі. Комп'ютер можна вимкнути — усе працює на сервері.</li></ol>
+<p>Якщо «✅» не прийшло за 3 дні — підключись до сервера (крок 7) і встав команду з кроку 8 ще раз. Майстер покаже, як іде вступ у групи, і поправить, що треба. Не допомогло — зроби скрін вікна і надішли Максу.</p>
 </section>
 
 <section class="step">

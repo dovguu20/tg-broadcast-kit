@@ -100,6 +100,13 @@ Me.premium = False
 run()
 ok("без Premium: нічого не надіслано, тривога власнику в ЛС", not Fake.forwards and any(p == OWNER and "Premium" in t for p, t in Fake.sent))
 Me.premium = True
+_orig_get = Fake.get_messages
+async def _one(self, peer, limit=None, **kw): return [Msg(295, "A text")]
+Fake.get_messages = _one
+log = run()
+ok("лише одне оголошення у «Збережених» → нічого не надіслано, тривога, ФІНІШ у лозі",
+   not Fake.forwards and any("Збережених" in t for _, t in Fake.sent) and "пропущено: у «Збережених»" in log)
+Fake.get_messages = _orig_get
 broadcast.DRY = True
 log = run()
 ok("--dry: нічого не надіслано, групи перевірені", not Fake.forwards and "DRY | варіанти" in log and "груп знайдено: 3" in log)
@@ -141,6 +148,9 @@ try:
 except RuntimeError:
     ok("send_owner: OWNER = сам акаунт → відмова", True)
 Me.id = 111
+
+common.save_json(os.path.join(tmp, "t.json"), {"a": 1})
+ok("save_json: пише атомарно, без залишку .tmp", json.load(open(os.path.join(tmp, "t.json"))) == {"a": 1} and not os.path.exists(os.path.join(tmp, "t.json.tmp")))
 
 # ---------- lead_reply ----------
 import lead_reply
@@ -188,6 +198,24 @@ new = asyncio.run(lead_reply.handle(LeadFake("x", 1, "h"), seen))
 ok("lead_reply: авто-відповідь лише тій, що написала перша без відповіді", len(Fake.sent) == 1 and Fake.sent[0][0].id == 1 and Fake.sent[0][1] == "Привет! Спасибо за сообщение")
 ok("lead_reply: 2 сповіщення (новий лід + «вже відповіли»), власник/бот/наш-перший пропущені", len(new) == 2 and any("Anna" in n and "надіслана" in n for n in new) and any("Bella" in n and "вже відповіли" in n for n in new) and str(OWNER) not in seen)
 Fake.sent.clear()
+from telethon.errors import InputUserDeactivatedError
+
+
+class DeadFake(LeadFake):
+    async def send_message(self, peer, text):
+        if peer.id == 50:
+            raise InputUserDeactivatedError(request=None)
+        Fake.sent.append((peer, text))
+
+
+LeadFake.history.insert(0, (user(50, "Deleted"), [Msg(9, "привіт")]))
+seen_dead, saves = {}, []
+new_dead = asyncio.run(lead_reply.handle(DeadFake("x", 1, "h"), seen_dead, save=lambda: saves.append(1)))
+ok("lead_reply: видалений акаунт не зупиняє обробку — наступний лід отримав відповідь",
+   any(p.id == 1 for p, _ in Fake.sent) and "50" in seen_dead and any("не дійшла" in n for n in new_dead))
+ok("lead_reply: стан зберігається після кожного ліда", len(saves) >= 2)
+LeadFake.history.pop(0)
+Fake.sent.clear()
 new2 = asyncio.run(lead_reply.handle(LeadFake("x", 1, "h"), seen))
 ok("lead_reply: повторний запуск нічого не шле і не дублює", not Fake.sent and not new2)
 lead_reply.SEED = True
@@ -204,10 +232,12 @@ ok("leads_report: 2 ліди, 1 без відповіді, медіана є", "
 import broadcast_watchdog as wd
 os.remove(os.path.join(tmp, "cron.log"))
 ok("watchdog: свіжа установка без жодного прогону → не тривога", wd.status() is None)
+open(os.path.join(tmp, "cron.log"), "w").write("")  # cron створив порожній лог, бо прогін пропустив замок
+ok("watchdog: порожній лог без жодного СТАРТ → не тривога", wd.status() is None)
 stamp = lambda ago_s: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - ago_s))
-open(os.path.join(tmp, "cron.log"), "w").write(f"{stamp(5 * 3600)},000 | INFO | === ФІНІШ | варіант: A ===\n")
+open(os.path.join(tmp, "cron.log"), "w").write(f"{stamp(5 * 3600 + 3000)},000 | INFO | === СТАРТ розсилки ===\n{stamp(5 * 3600)},000 | INFO | === ФІНІШ | варіант: A ===\n")
 ok("watchdog: прогін 5 год тому → тривога", wd.status() and "5 год тому" in wd.status())
-open(os.path.join(tmp, "cron.log"), "w").write(f"{stamp(600)},000 | INFO | === ФІНІШ | варіант: A ===\n")
+open(os.path.join(tmp, "cron.log"), "w").write(f"{stamp(3600)},000 | INFO | === СТАРТ розсилки ===\n{stamp(600)},000 | INFO | === ФІНІШ | варіант: A ===\n")
 ok("watchdog: прогін 10 хв тому → тихо", wd.status() is None)
 ok("watchdog/common: pgrep не бачить прогону в пісочниці", not common.broadcast_running())
 

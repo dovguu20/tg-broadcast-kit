@@ -28,7 +28,7 @@ def status(now=None):
     """None = все гаразд, інакше текст проблеми."""
     now = now or time.time()
     path = os.path.join(k.BASE_DIR, "cron.log")
-    if not os.path.exists(path):
+    if not os.path.exists(path) or "СТАРТ" not in open(path, encoding="utf-8", errors="replace").read(200_000):
         print("розсилка ще не мала жодного прогону (щойно встановлена) — не тривога")
         return None
     ts = last_finish(path)
@@ -55,7 +55,9 @@ async def main():
             return
     except Exception:
         pass
-    text = f"⛔️ Розсилка {k.BRAND} стоїть: {problem}.\nСкажи агенту: «подивись cron.log і полагодь»."
+    text = (f"⛔️ Розсилка {k.BRAND} стоїть: {problem}.\n"
+            "Підключись до сервера і встав команду установки з інструкції ще раз — "
+            "майстер перевірить і поправить. Не допомогло — напиши Максу.")
     if DRY:
         print("[dry] надіслав би:", text)
         return

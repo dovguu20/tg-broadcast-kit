@@ -19,14 +19,34 @@ if [ "${1:-}" = "--cron" ]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get -o DPkg::Lock::Timeout=600 update -qq
+umask 077
+# Свіжий сервер перші хвилини сам оновлюється: update чекаємо циклом (Lock::Timeout діє лише на install).
+for i in $(seq 1 40); do apt-get update -qq && break; sleep 15; done
 apt-get -o DPkg::Lock::Timeout=600 install -y -qq python3 python3-venv python3-pip git cron tzdata >/dev/null
 # Час у логах — київський; крон читає системний час.
 timedatectl set-timezone Europe/Kyiv 2>/dev/null || ln -sf /usr/share/zoneinfo/Europe/Kyiv /etc/localtime
-systemctl restart cron 2>/dev/null || true   # інакше крон живе зі старим часовим поясом до перезавантаження
-[ -d venv ] || python3 -m venv venv
+if [ -d /run/systemd/system ]; then
+  systemctl enable -q cron 2>/dev/null || true
+  systemctl restart cron   # інакше крон живе зі старим часовим поясом до перезавантаження
+  systemctl is-active -q cron || { echo "cron не запустився — розклад не працюватиме"; exit 1; }
+fi
+# Перерваний минулий запуск міг лишити напівстворений venv — тоді створюємо заново.
+if ! venv/bin/python -m pip --version >/dev/null 2>&1; then
+  [ -d venv ] && mv venv "venv.broken.$(date +%s)"
+  python3 -m venv venv
+fi
 venv/bin/pip install -q -r requirements.txt
 [ -f .env ] || cp .env.example .env
+# Стара .env після оновлення комплекту: дописуємо ключі, яких у ній ще нема (значення з прикладу).
+venv/bin/python - <<'PY'
+from dotenv import dotenv_values
+have, example = dotenv_values(".env"), open(".env.example", encoding="utf-8").read().splitlines()
+add = [l for l in example if "=" in l and not l.startswith("#") and l.split("=", 1)[0] not in have]
+if add:
+    s = open(".env", encoding="utf-8").read().rstrip("\n")
+    open(".env", "w", encoding="utf-8").write(s + "\n" + "\n".join(add) + "\n")
+    print("дописано в .env:", ", ".join(l.split("=", 1)[0] for l in add))
+PY
 chmod 600 .env
 chmod 600 ./*.session 2>/dev/null || true
 venv/bin/python -c "import telethon, dotenv; print('бібліотеки ok: Telethon', telethon.__version__)"
