@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Майстер установки розсилки. Запускати на сервері (Ubuntu 22.04/24.04) від root:
-#   curl -fsSL https://raw.githubusercontent.com/dovguu20/tg-broadcast-kit/main/setup.sh -o setup.sh && bash setup.sh
+#   curl -fsSL https://github.com/dovguu20/tg-broadcast-kit/raw/main/setup.sh -o setup.sh && bash setup.sh
 # Повторний запуск безпечний: що вже зроблено — пропускає, налаштування й вхід зберігає.
 set -euo pipefail
 REPO=https://github.com/dovguu20/tg-broadcast-kit
@@ -15,10 +15,6 @@ ask() { local v; while :; do read -r -p "  > " v </dev/tty; v=${v//[[:space:]]/}
 pause() { read -r -p "  $1" _ </dev/tty; }
 
 [ "$(id -u)" = 0 ] || { echo "Запусти від root: спочатку ssh root@IP_сервера"; exit 1; }
-# Поки йде прогін розсилки, акаунт не чіпаємо (дві програми на одному акаунті рвуть з'єднання).
-while pgrep -f 'broadcast\.py' >/dev/null; do
-  echo "  Зараз іде розсилка (до ~50 хв). Чекаю, поки закінчиться, — вікно не закривай..."; sleep 60
-done
 
 say "=== Установка розсилки ==="
 say "Крок 1/6. Ставлю потрібні програми (1–3 хвилини)..."
@@ -26,8 +22,20 @@ export DEBIAN_FRONTEND=noninteractive
 # Свіжий сервер перші хвилини сам оновлюється і тримає apt — чекаємо до 10 хв, а не падаємо.
 apt-get -o DPkg::Lock::Timeout=600 update -qq >/dev/null && apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null
 if [ -d "$DIR/.git" ]; then git -C "$DIR" pull -q --ff-only 2>/dev/null || echo "  (оновлення комплекту пропущено, працюю з тим, що є)"
-else git clone -q "$REPO" "$DIR"; fi
+else
+  rm -rf "$DIR.tmp"   # недокачана копія з минулої спроби
+  git clone -q "$REPO" "$DIR.tmp"
+  [ -d "$DIR" ] && mv "$DIR" "$DIR.broken.$(date +%s)"   # папка без .git — зберігаємо, не видаляємо
+  mv "$DIR.tmp" "$DIR"
+fi
 cd "$DIR"
+# Поки йде прогін розсилки, акаунт не чіпаємо (дві програми на одному акаунті рвуть з'єднання).
+# Розклад запускає розсилку під цим самим замком — поки майстер працює, вона просто пропустить свій час.
+exec 8>broadcast.lock
+if ! flock -n 8; then
+  echo "  Зараз іде розсилка (до ~50 хв). Чекаю, поки закінчиться, — вікно не закривай..."
+  flock 8
+fi
 if ! bash install.sh > /tmp/broadcast-install.log 2>&1; then
   echo "  Помилка встановлення. Останні рядки:"; tail -5 /tmp/broadcast-install.log; exit 1
 fi
@@ -37,7 +45,10 @@ setenv() { venv/bin/python - "$1" "$2" <<'PY'
 import re, sys
 key, val = sys.argv[1], sys.argv[2]
 s = open(".env", encoding="utf-8").read()
-s = re.sub(rf"(?m)^{key}=.*$", lambda m: f"{key}={val}", s)
+if re.search(rf"(?m)^{key}=", s):
+    s = re.sub(rf"(?m)^{key}=.*$", lambda m: f"{key}={val}", s)
+else:
+    s = s.rstrip("\n") + f"\n{key}={val}\n"   # стара .env без цього ключа
 open(".env", "w", encoding="utf-8").write(s)
 PY
 }
@@ -68,9 +79,14 @@ say "Крок 3/6. Вхід в акаунт розсилки"
 if venv/bin/python check_account.py 2>/dev/null | grep -q "authorized=true"; then
   ok "вхід уже виконано"
 else
-  echo "  Зараз попросить: номер акаунта розсилки (+380...), потім код, який прийде"
-  echo "  в сам Telegram (не SMS), потім хмарний пароль. Символи не видно — це нормально."
-  until venv/bin/python login_phone.py --login </dev/tty >/tmp/broadcast-login.log 2>&1 \
+  echo "  Зараз попросить: номер акаунта розсилки (+380...), потім код, потім хмарний пароль."
+  echo "  Код зазвичай приходить у сам Telegram на телефоні з цим акаунтом; куди саме —"
+  echo "  програма напише нижче (Telegram / SMS / дзвінок). Символи не видно — це нормально."
+  until venv/bin/python login_phone.py --login </dev/tty 2>&1 | tee /tmp/broadcast-login.log \
+          | { grep --line-buffered "SentCodeType" || true; } | sed -u \
+            -e '/SentCodeType/!d' -e 's/.*SentCodeTypeApp.*/  → Код прийде в Telegram (чат «Telegram» на телефоні)./' \
+            -e 's/.*SentCodeTypeSms.*/  → Код прийде в SMS./' -e 's/.*SentCodeTypeCall.*/  → Код продиктують дзвінком./' \
+            -e 's/.*SentCodeType\(Flash\|Missed\)Call.*/  → Telegram подзвонить; код — останні цифри номера, що дзвонив./' \
         && venv/bin/python check_account.py 2>/dev/null | grep -q "authorized=true"; do
     echo "  Вхід не вдався. Причина:"
     { grep -o '"error": "[A-Za-z]*"\|retry_after_seconds": [0-9]*\|Invalid TELEGRAM_[A-Z_]*\|вже запущено' \
@@ -83,10 +99,17 @@ else
 fi
 ACCT=$(venv/bin/python check_account.py)
 USERNAME=$(sed -n 's/.*username=\(@[^ ]*\).*/\1/p' <<<"$ACCT")
+while [ -z "$USERNAME" ] || [ "$USERNAME" = "@no_username" ]; do
+  echo "  У акаунта розсилки нема імені користувача (@...). Воно потрібне, щоб ти його знайшов."
+  echo "  На телефоні в акаунті розсилки: Налаштування → Ім'я користувача → придумай і збережи."
+  pause "Коли зберіг — натисни Enter..."
+  ACCT=$(venv/bin/python check_account.py)
+  USERNAME=$(sed -n 's/.*username=\(@[^ ]*\).*/\1/p' <<<"$ACCT")
+done
 ok "вхід виконано: $USERNAME"
 if ! grep -q "premium=True" <<<"$ACCT"; then
   say "На цьому акаунті нема Telegram Premium — без нього розсилка не працює."
-  echo "  Увімкни Premium і запусти майстер ще раз:  bash $DIR/setup.sh"; exit 1
+  echo "  Увімкни Premium і запусти майстер ще раз:  bash setup.sh"; exit 1
 fi
 ok "Telegram Premium є"
 
@@ -113,7 +136,9 @@ echo "  Зразки: $REPO/tree/main/texts"
 while :; do
   pause "Коли надіслав — натисни Enter..."
   echo "  Ось що розсилка надсилатиме (два найновіші повідомлення):"
-  venv/bin/python wizard_check.py saved || true
+  if ! venv/bin/python wizard_check.py saved; then
+    echo "  Потрібно два повідомлення в «Збережених». Надішли тексти (спочатку B, потім A)."; continue
+  fi
   read -r -p "  Це твої оголошення? (так/ні) " yn </dev/tty
   [[ $yn =~ ^(так|Так|ТАК|да|Да|y|Y|yes|Yes|т|д)$ ]] && break
   echo "  Тоді надішли собі у «Збережені» правильні тексти (спочатку B, потім A)."
@@ -129,7 +154,7 @@ say "Крок 6/6. Вступ у групи і запуск"
 chmod +x join_step.sh
 { crontab -l 2>/dev/null | grep -v "# tg-join-temp" || true
   echo "7 * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
-if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 & fi
+if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh 8>&- >/dev/null 2>&1 & fi
 ok "вступ у групи запущено"
 
 say "Готово!"

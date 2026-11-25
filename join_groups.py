@@ -49,11 +49,15 @@ async def main():
                     fail += 1; tag = "нема такої групи"
                 except RPCError as e:
                     fail += 1; tag = type(e).__name__
+                    if (getattr(e, "code", 0) or 0) >= 500:  # тимчасовий збій Telegram — повторимо наступною партією
+                        tag += " (тимчасово, повторю пізніше)"
                 print(f"  [{i}] {tag} -> {t}")
-                log.write(t.lower() + "\n"); log.flush()
+                if "тимчасово" not in tag:
+                    log.write(t.lower() + "\n"); log.flush()
                 if i < min(LIMIT, len(todo)):
                     await asyncio.sleep(random.randint(60, 100))
-        left = len(todo) - min(LIMIT, len(todo))
+        done_now = set(open(DONE).read().split()) if os.path.exists(DONE) else set()
+        left = len([t for t in TARGETS if t.lower() not in done_now])
         summary = f"вступив {joined} | вже був {already} | заявок {req} | помилок {fail} | лишилось {left}"
         print("\n" + summary)
         if stop:
