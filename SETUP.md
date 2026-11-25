@@ -94,18 +94,19 @@ Telegram просить почекати стільки секунд, скіль
 
 ### 7. Вступ у групи (≈5 годин, автоматично)
 Акаунт має бути учасником кожної з 81 групи. Вступ іде партіями по 20 з паузами, щоб
-Telegram не вважав це спамом. Постав тимчасовий розклад на сервері:
+Telegram не вважав це спамом. Постав тимчасовий розклад на сервері (той самий крок,
+який ставить майстер `setup.sh`):
 ```
-( crontab -l 2>/dev/null; echo "7 * * * * cd /root/broadcast && flock -n /root/broadcast/join.lock venv/bin/python join_groups.py 20 >> join.log 2>&1 # tg-join-temp" ) | crontab -
+ssh root@IP 'chmod +x /root/broadcast/join_step.sh; ( crontab -l 2>/dev/null | grep -v "# tg-join-temp"; echo "7 * * * * bash /root/broadcast/join_step.sh # tg-join-temp" ) | crontab -'
 ```
-і одразу запусти першу партію руками у фоні (той самий flock — щоб дві партії не йшли одночасно):
-`ssh root@IP "cd /root/broadcast && nohup flock -n /root/broadcast/join.lock venv/bin/python join_groups.py 20 >> join.log 2>&1 &"`.
+і одразу запусти першу партію у фоні:
+`ssh root@IP "cd /root/broadcast && nohup bash join_step.sh >/dev/null 2>&1 &"`.
 Скажи людині, що це триватиме кілька годин і можна відійти.
-Перевірка готовності: `wc -l < /root/broadcast/joined_done.txt` → 81 і в `join.log`
-є «СПИСОК ПРОЙДЕНО ПОВНІСТЮ». Тоді прибери тимчасовий розклад:
-`crontab -l | grep -v "# tg-join-temp" | crontab -`.
-Якщо в `join.log` є «Вступ у групи зупинено» (FloodWait/PeerFlood) — нічого не роби добу,
-розклад сам продовжить наступної години; якщо повторюється — почекати день.
+`join_step.sh` сам: бере партію по 20, при «Вступ у групи зупинено» (FloodWait/PeerFlood)
+робить паузу на добу, а коли список пройдено — прибирає тимчасовий розклад, вмикає
+розклад розсилки і пише людині «✅ Акаунт вступив у групи, розсилка увімкнена».
+Перевірка готовності: у `crontab -l` нема рядка `# tg-join-temp`, а в `join.log` є
+«СПИСОК ПРОЙДЕНО ПОВНІСТЮ».
 «заявка на модерацію» і «нема такої групи» — нормально, такі групи просто не отримають постів.
 
 ### 8. Суха перевірка (нічого не надсилає)
