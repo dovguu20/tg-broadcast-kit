@@ -23,8 +23,22 @@ cron = [l for l in open(os.path.join(KIT, "crontab.example")).read().splitlines(
 ok("crontab.example: 5 завдань з маркером", len(cron) == 5 and all(l.endswith("# tg-broadcast-kit") and len(l.split()) >= 7 for l in cron))
 for sh in ("install.sh", "setup.sh", "join_step.sh"):
     ok(f"{sh}: синтаксис bash", subprocess.run(["bash", "-n", os.path.join(KIT, sh)]).returncode == 0)
-for s in ("wizard_check.py", "broadcast.py", "lead_reply.py", "leads_report.py", "spamcheck.py", "broadcast_watchdog.py", "join_groups.py", "login_phone.py", "check_account.py", "common.py"):
+for s in ("wizard_check.py", "broadcast.py", "lead_reply.py", "leads_report.py", "spamcheck.py", "broadcast_watchdog.py", "join_groups.py", "login_phone.py", "check_account.py", "common.py", "apply_env.py"):
     ok(f"{s} існує", os.path.exists(os.path.join(KIT, s)))
+install_text = open(os.path.join(KIT, "install.sh"), encoding="utf-8").read()
+ok("install.sh: сесія з .env, --apply-env і --status",
+   "--apply-env" in install_text and "--status" in install_text and "TELEGRAM_SESSION_NAME=" in install_text)
+login_text = open(os.path.join(KIT, "login_phone.py"), encoding="utf-8").read()
+ok("login_phone: неінтерактивний вхід без getpass",
+   "--send-code" in login_text and "--sign-in" in login_text and "TELEGRAM_PHONE" in login_text
+   and "TELEGRAM_CODE" in login_text and "TELEGRAM_2FA_PASSWORD" in login_text)
+grok = open(os.path.join(KIT, "GROK.md"), encoding="utf-8").read()
+readme = open(os.path.join(KIT, "README.md"), encoding="utf-8").read()
+setup_doc = open(os.path.join(KIT, "SETUP.md"), encoding="utf-8").read()
+ok("GROK.md: єдиний сценарій помічника, секрети не в чат",
+   "GROK.md" in readme and "прихован" in grok and "TELEGRAM_API_HASH" in grok and "--dry" in grok)
+ok("GROK.md і SETUP.md без команди живого поста в групи",
+   "@Adult_platform" not in grok and "@Adult_platform" not in setup_doc and "GROK.md" in setup_doc)
 
 # ---------- пісочниця ----------
 tmp = tempfile.mkdtemp(prefix="kitcheck_")

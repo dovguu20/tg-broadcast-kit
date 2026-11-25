@@ -1,6 +1,7 @@
 """Спільне для допоміжних скриптів комплекту: конфіг з .env, перевірка «іде прогін»,
 клієнт на копії сесії, тривога власнику. broadcast.py цього файла не використовує."""
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -24,9 +25,20 @@ def broadcast_running() -> bool:
     return subprocess.run(["pgrep", "-f", r"broadcast\.py"], capture_output=True).returncode == 0
 
 
+def require_api():
+    """Перевірити ключі ДО копії файла сесії, щоб порожній api_id не лишав трейсбек."""
+    api_id = (CFG.get("TELEGRAM_API_ID") or "").strip()
+    api_hash = (CFG.get("TELEGRAM_API_HASH") or "").strip()
+    if not api_id.isascii() or not api_id.isdigit() or int(api_id) <= 0:
+        raise SystemExit("Invalid TELEGRAM_API_ID")
+    if not re.fullmatch(r"[a-fA-F0-9]{32}", api_hash):
+        raise SystemExit("Invalid TELEGRAM_API_HASH")
+    return int(api_id), api_hash
+
+
 def client(tag: str):
     """Клієнт на КОПІЇ файла сесії (живий файл відкриває лише broadcast.py). -> (client, копія)."""
-    api_id, api_hash = int(CFG["TELEGRAM_API_ID"]), CFG["TELEGRAM_API_HASH"]  # до копії: щоб не лишати її при поганому .env
+    api_id, api_hash = require_api()
     cp = os.path.join(BASE_DIR, f".{tag}_{SESSION}")
     shutil.copy(os.path.join(BASE_DIR, SESSION + ".session"), cp + ".session")
     return TelegramClient(cp, api_id, api_hash, receive_updates=False), cp
