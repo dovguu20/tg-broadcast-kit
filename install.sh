@@ -19,8 +19,8 @@ if [ "${1:-}" = "--cron" ]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip git cron tzdata >/dev/null
+apt-get -o DPkg::Lock::Timeout=600 update -qq
+apt-get -o DPkg::Lock::Timeout=600 install -y -qq python3 python3-venv python3-pip git cron tzdata >/dev/null
 # Час у логах — київський; крон читає системний час.
 timedatectl set-timezone Europe/Kyiv 2>/dev/null || ln -sf /usr/share/zoneinfo/Europe/Kyiv /etc/localtime
 systemctl restart cron 2>/dev/null || true   # інакше крон живе зі старим часовим поясом до перезавантаження

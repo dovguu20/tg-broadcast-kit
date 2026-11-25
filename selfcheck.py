@@ -21,8 +21,9 @@ ok(".env.example: LEAD_REPLY з переносами рядків", "\n" in env[
 ok(".env.example: три порожні поля для учня", all(env.get(k) == "" for k in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH", "OWNER_ID")))
 cron = [l for l in open(os.path.join(KIT, "crontab.example")).read().splitlines() if l.strip()]
 ok("crontab.example: 5 завдань з маркером", len(cron) == 5 and all(l.endswith("# tg-broadcast-kit") and len(l.split()) >= 7 for l in cron))
-ok("install.sh: синтаксис bash", subprocess.run(["bash", "-n", os.path.join(KIT, "install.sh")]).returncode == 0)
-for s in ("broadcast.py", "lead_reply.py", "leads_report.py", "spamcheck.py", "broadcast_watchdog.py", "join_groups.py", "login_phone.py", "check_account.py", "common.py"):
+for sh in ("install.sh", "setup.sh", "join_step.sh"):
+    ok(f"{sh}: синтаксис bash", subprocess.run(["bash", "-n", os.path.join(KIT, sh)]).returncode == 0)
+for s in ("wizard_check.py", "broadcast.py", "lead_reply.py", "leads_report.py", "spamcheck.py", "broadcast_watchdog.py", "join_groups.py", "login_phone.py", "check_account.py", "common.py"):
     ok(f"{s} існує", os.path.exists(os.path.join(KIT, s)))
 
 # ---------- пісочниця ----------
@@ -201,6 +202,8 @@ ok("leads_report: 2 ліди, 1 без відповіді, медіана є", "
 
 # ---------- watchdog ----------
 import broadcast_watchdog as wd
+os.remove(os.path.join(tmp, "cron.log"))
+ok("watchdog: свіжа установка без жодного прогону → не тривога", wd.status() is None)
 stamp = lambda ago_s: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - ago_s))
 open(os.path.join(tmp, "cron.log"), "w").write(f"{stamp(5 * 3600)},000 | INFO | === ФІНІШ | варіант: A ===\n")
 ok("watchdog: прогін 5 год тому → тривога", wd.status() and "5 год тому" in wd.status())

@@ -27,7 +27,11 @@ def last_finish(path):
 def status(now=None):
     """None = все гаразд, інакше текст проблеми."""
     now = now or time.time()
-    ts = last_finish(os.path.join(k.BASE_DIR, "cron.log"))
+    path = os.path.join(k.BASE_DIR, "cron.log")
+    if not os.path.exists(path):
+        print("розсилка ще не мала жодного прогону (щойно встановлена) — не тривога")
+        return None
+    ts = last_finish(path)
     if ts is None:
         return "у лозі взагалі немає завершених прогонів"
     if now - ts > MAX_SILENCE_H * 3600:

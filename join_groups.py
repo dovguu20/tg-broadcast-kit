@@ -57,8 +57,10 @@ async def main():
         summary = f"вступив {joined} | вже був {already} | заявок {req} | помилок {fail} | лишилось {left}"
         print("\n" + summary)
         if stop:
+            print("Вступ у групи зупинено:", stop)
             await k.alert(cl, f"⚠️ Вступ у групи зупинено: {who}\nПричина: {stop}\n{summary}\n"
-                              "Почекай добу і запусти join_groups.py ще раз.")
+                              "Telegram просить паузу. Наступна спроба — автоматично через добу. "
+                              "Якщо повторюється кілька днів — напиши Максу.")
         elif left == 0:
             print("СПИСОК ПРОЙДЕНО ПОВНІСТЮ")
     finally:
