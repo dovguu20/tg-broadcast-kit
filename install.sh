@@ -99,17 +99,18 @@ if [ "${1:-}" = "--status" ]; then
   else
     emit join_complete no
   fi
-  if pgrep -f 'venv/bin/python broadcast\.py' >/dev/null 2>&1; then
-    emit broadcast_running yes
-  else
-    emit broadcast_running no
-  fi
+  # Прогін саме цієї папки: на сервері можуть крутитися й інші акаунти (/root/broadcast-2, ...).
+  running=no
+  for p in $(pgrep -f 'venv/bin/python broadcast\.py' 2>/dev/null || true); do
+    [ "$(readlink "/proc/$p/cwd" 2>/dev/null)" = "$DIR" ] && running=yes
+  done
+  emit broadcast_running "$running"
   if ! command -v crontab >/dev/null 2>&1; then
     emit crontab unavailable
     emit join_cron no
     emit broadcast_cron 0
   else
-    cron_now=$(crontab -l 2>/dev/null || true)
+    cron_now=$(crontab -l 2>/dev/null | grep -F "$DIR/" || true)   # лише рядки цієї папки
     emit crontab yes
     if printf '%s\n' "$cron_now" | grep -q '# tg-join-temp'; then emit join_cron yes; else emit join_cron no; fi
     emit broadcast_cron "$(printf '%s\n' "$cron_now" | grep -c '# tg-broadcast-kit' || true)"
@@ -131,10 +132,15 @@ if [ "${1:-}" = "--cron" ]; then
   sess=$(session_name)
   [ -f "${sess}.session" ] || echo "УВАГА: файла сесії ${sess}.session ще нема — спершу вхід (login_phone.py --send-code і --sign-in, або --login у терміналі)"
   tmp=$(mktemp)
-  { crontab -l 2>/dev/null | grep -v "# tg-broadcast-kit" || true; } > "$tmp"
-  sed "s#DIR#$DIR#g" crontab.example >> "$tmp"
+  # Кілька акаунтів на одному сервері — кожен у своїй папці: /root/broadcast, /root/broadcast-2, ...
+  # Міняємо лише рядки цієї папки, а прогони розносимо на 40 хв (:00, :40, потім :20 непарних годин).
+  n=1; [[ ${DIR##*/} =~ ^broadcast-([0-9]+)$ ]] && n=${BASH_REMATCH[1]}
+  off=$(( (n - 1) * 40 % 120 )); slot=()
+  [ "$off" = 0 ] || slot=(-e "1s#^0 \*/2 #$(( off % 60 )) $(( off / 60 ))-23/2 #")
+  { crontab -l 2>/dev/null | awk -v d="$DIR/" '!(index($0, "# tg-broadcast-kit") && index($0, d))' || true; } > "$tmp"
+  sed -e "s#DIR#$DIR#g" "${slot[@]}" crontab.example >> "$tmp"
   crontab "$tmp"; rm -f "$tmp"
-  echo "автоматику ввімкнено:"; crontab -l | grep "# tg-broadcast-kit"
+  echo "автоматику ввімкнено:"; crontab -l | grep -F "$DIR/" | grep "# tg-broadcast-kit"
   exit 0
 fi
 

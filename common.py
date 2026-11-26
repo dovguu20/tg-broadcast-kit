@@ -22,8 +22,17 @@ CHAT = CFG.get("REPORT_CHAT_ID") or ""
 def broadcast_running() -> bool:
     """Поки іде прогін, сесію не чіпає більше ніхто: дві сесії на одному auth key —
     Telegram рве з'єднання розсилки («account is likely misusing the session»)."""
-    # Саме процес розсилки (а не редактор чи tail, у яких у рядку теж є «broadcast.py»).
-    return subprocess.run(["pgrep", "-f", r"venv/bin/python broadcast\.py"], capture_output=True).returncode == 0
+    # Саме процес розсилки (а не редактор чи tail, у яких у рядку теж є «broadcast.py»)
+    # і саме ЦІЄЇ папки: інші акаунти на сервері (/root/broadcast-2, ...) нам не заважають.
+    out = subprocess.run(["pgrep", "-f", r"venv/bin/python broadcast\.py"], capture_output=True, text=True).stdout
+    here = os.path.realpath(BASE_DIR)
+    for pid in out.split():
+        try:
+            if os.path.realpath(f"/proc/{pid}/cwd") == here:
+                return True
+        except OSError:
+            pass
+    return False
 
 
 def require_api():

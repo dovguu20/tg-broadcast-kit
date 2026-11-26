@@ -15,4 +15,4 @@ grep -q "СПИСОК ПРОЙДЕНО ПОВНІСТЮ" <<<"$out" || exit 0
 [ -f leads_seen.json ] || { echo "запам'ятати старі чати не вдалось — повторю наступної години" >> join.log; exit 1; }
 bash install.sh --cron >> join.log 2>&1 || { echo "install.sh --cron не вдався" >> join.log; exit 1; }
 venv/bin/python wizard_check.py done >> join.log 2>&1 || exit 1
-{ crontab -l 2>/dev/null | grep -v "# tg-join-temp" || true; } | crontab -
+{ crontab -l 2>/dev/null | grep -vF "$PWD/join_step.sh # tg-join-temp" || true; } | crontab -   # лише свій рядок: інші акаунти можуть ще вступати

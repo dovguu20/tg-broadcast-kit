@@ -372,6 +372,63 @@ def test_apply_env_and_install(tmp: Path) -> None:
     proc = subprocess.run(["bash", "install.sh", "--cron"], cwd=tmp, text=True, capture_output=True, env=cron_env, check=False)
     captured = store.read_text(encoding="utf-8")
     check("повторний --cron не дублює рядки", proc.returncode == 0 and captured.count("# tg-broadcast-kit") == 5 and captured.count("# tg-join-temp") == 1)
+    test_several_accounts(tmp, store, cron_env)
+
+
+def test_several_accounts(tmp: Path, store: Path, cron_env: dict) -> None:
+    """Кілька акаунтів на одному сервері (/root/broadcast, /root/broadcast-2): кожна папка
+    чіпає лише свої рядки розкладу, свій рядок вступу в групи і бачить лише свій прогін."""
+    first, second = tmp / "srv" / "broadcast", tmp / "srv" / "broadcast-2"
+    for d in (first, second):
+        d.mkdir(parents=True)
+        for name in ("install.sh", "crontab.example", "join_step.sh", "common.py"):
+            shutil.copy(ROOT / name, d / name)
+        (d / ".env").write_text((tmp / ".env").read_text(encoding="utf-8"), encoding="utf-8")
+    run = lambda d, *a: subprocess.run(["bash", *a], cwd=d, text=True, capture_output=True, env=cron_env, check=False)
+    mine = lambda d: [l for l in store.read_text(encoding="utf-8").splitlines() if f"{d}/" in l]
+
+    run(first, "install.sh", "--cron")
+    store.write_text(store.read_text(encoding="utf-8")
+                     + f"7 * * * * bash {first}/join_step.sh # tg-join-temp\n"
+                     + f"7 * * * * bash {second}/join_step.sh # tg-join-temp\n", encoding="utf-8")
+    proc = run(second, "install.sh", "--cron")
+    a, b = mine(first), mine(second)
+    check("другий акаунт: свої 5 рядків, перший цілий",
+          proc.returncode == 0 and sum("# tg-broadcast-kit" in l for l in a) == 5
+          and sum("# tg-broadcast-kit" in l for l in b) == 5)
+    check("другий акаунт: прогін зсунутий на :40", any(l.startswith("40 0-23/2 * * * ") and "broadcast.py" in l for l in b))
+    run(first, "install.sh", "--cron")
+    check("повторний --cron першого не чіпає другий", mine(second) == b and len(mine(first)) == len(a))
+
+    # join_step другого акаунта, коли список пройдено, прибирає лише СВІЙ рядок вступу.
+    fake = second / "venv" / "bin"
+    fake.mkdir(parents=True)
+    (fake / "python").write_text("#!/bin/bash\necho 'СПИСОК ПРОЙДЕНО ПОВНІСТЮ'\n", encoding="utf-8")
+    os.chmod(fake / "python", 0o755)
+    (second / "leads_seen.json").write_text("{}", encoding="utf-8")
+    proc = run(second, "join_step.sh")
+    cron = store.read_text(encoding="utf-8")
+    check("join_step прибирає лише свій рядок вступу",
+          proc.returncode == 0 and f"{second}/join_step.sh" not in cron and f"{first}/join_step.sh # tg-join-temp" in cron)
+
+    # Прогін розсилки другого акаунта не «займає» перший.
+    if not Path("/proc/self/cwd").exists():
+        print("skip  прогін по папках (нема /proc)")
+        return
+    (fake / "python").write_text("#!/bin/bash\nsleep 30\n", encoding="utf-8")
+    proc = subprocess.Popen(["venv/bin/python", "broadcast.py"], cwd=second)
+    try:
+        import time
+        time.sleep(0.5)
+        seen = lambda d: subprocess.run([sys.executable, "-c", "import common; print(common.broadcast_running())"],
+                                        cwd=d, text=True, capture_output=True).stdout.strip()
+        check("прогін бачить лише своя папка", seen(second) == "True" and seen(first) == "False")
+        st = lambda d: run(d, "install.sh", "--status").stdout
+        check("status: прогін лише у своїй папці",
+              "broadcast_running=yes" in st(second) and "broadcast_running=no" in st(first))
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 def test_bash_syntax() -> None:

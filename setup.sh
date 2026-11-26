@@ -4,9 +4,12 @@
 # Запускати на сервері (Ubuntu 22.04/24.04) від root:
 #   curl -fsSL https://github.com/dovguu20/tg-broadcast-kit/raw/main/setup.sh -o setup.sh && bash setup.sh
 # Повторний запуск безпечний: що вже зроблено — пропускає, налаштування й вхід зберігає.
+# Кілька акаунтів на одному сервері: та сама команда, у меню «новий». Кожен акаунт живе
+# у своїй папці (/root/broadcast, /root/broadcast-2, ...) зі своїм входом, текстами й розкладом.
 set -euo pipefail
 REPO=https://github.com/dovguu20/tg-broadcast-kit
 DIR=/root/broadcast
+NEW=
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()  { printf '  ✓ %s\n' "$*"; }
@@ -28,6 +31,40 @@ export DEBIAN_FRONTEND=noninteractive
 for i in $(seq 1 40); do apt-get update -qq >/dev/null 2>&1 && break
   [ "$i" = 1 ] && echo "  Сервер ще сам оновлюється — чекаю (до 10 хвилин)..."; sleep 15; done
 apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null
+
+# Акаунти, які вже стоять на сервері (є .env).
+ACCOUNTS=()
+while read -r d; do [ -f "$d/.env" ] && ACCOUNTS+=("$d"); done \
+  < <(ls -d /root/broadcast /root/broadcast-[0-9]* 2>/dev/null | grep -E '^/root/broadcast(-[0-9]+)?$' | sort -V)
+if [ ${#ACCOUNTS[@]} -gt 0 ]; then
+  # Спершу свіжий комплект у ВСІХ папках: старий код не знав про сусідів і міг би
+  # стерти розклад нового акаунта. Налаштування, вхід і стан git не чіпає.
+  for d in "${ACCOUNTS[@]}"; do
+    [ -d "$d/.git" ] && { git -C "$d" fetch -q origin main && git -C "$d" reset -q --hard origin/main \
+      || echo "  Не вдалось оновити $d (інтернет на сервері?)."; }
+  done
+  say "На цьому сервері вже є акаунти розсилки:"
+  for i in "${!ACCOUNTS[@]}"; do
+    d=${ACCOUNTS[$i]}; name=$(grep -E '^BRAND=' "$d/.env" | head -1 | cut -d= -f2- || true)
+    [ -n "$name" ] || name=$(flock -n "$d/session.lock" timeout 30 "$d/venv/bin/python" "$d/check_account.py" 2>/dev/null \
+                             | sed -n 's/.*username=\(@[^ ]*\).*/\1/p' || true)
+    echo "  $((i + 1)) — ${name:-акаунт у папці $d}"
+  done
+  echo "  Напиши номер, щоб перевірити або доналаштувати цей акаунт,"
+  echo "  або «новий», щоб додати на цей сервер ще один акаунт."
+  while :; do
+    read -r -p "  > " c </dev/tty; c=${c//[[:space:]]/}
+    if [[ $c =~ ^[0-9]+$ ]] && [ "$c" -ge 1 ] && [ "$c" -le ${#ACCOUNTS[@]} ]; then
+      DIR=${ACCOUNTS[$((c - 1))]}; break
+    elif [[ $c =~ ^(новий|Новий|новый|Новый|нов|n|N|new|New|ytdbq)$ ]]; then
+      last=${ACCOUNTS[${#ACCOUNTS[@]}-1]}; n=1; [[ $last =~ -([0-9]+)$ ]] && n=${BASH_REMATCH[1]}
+      DIR=/root/broadcast-$((n + 1)); NEW=1; break
+    fi
+    echo "  Напиши номер зі списку (1, 2, ...) або «новий»."
+  done
+  ok "працюю з папкою $DIR"
+fi
+
 if [ -d "$DIR/.git" ]; then
   # Оновлення комплекту. Налаштування, вхід і стан (.env, *.session, *.json) git не чіпає.
   git -C "$DIR" fetch -q origin main && git -C "$DIR" reset -q --hard origin/main \
@@ -78,10 +115,19 @@ ask_owner() {
 }
 
 say "Крок 2/6. Ключі Telegram"
+if [ -n "$NEW" ] && ! filled OWNER_ID; then
+  # Твій особистий id той самий для всіх акаунтів — беремо з першого.
+  OWNER=$(grep -E '^OWNER_ID=[0-9]{5,15}$' "${ACCOUNTS[0]}/.env" | head -1 | cut -d= -f2- || true)
+  [ -n "$OWNER" ] && setenv OWNER_ID "$OWNER"
+fi
 if filled TELEGRAM_API_ID && filled TELEGRAM_API_HASH && filled OWNER_ID; then
   ok "ключі вже записані раніше"
 else
-  ask_keys; ask_owner
+  if ! filled TELEGRAM_API_ID || ! filled TELEGRAM_API_HASH; then
+    [ -n "$NEW" ] && echo "  Це НОВИЙ акаунт: ключі беруться на my.telegram.org з номера саме цього акаунта."
+    ask_keys
+  fi
+  filled OWNER_ID || ask_owner
   ok "ключі записано"
 fi
 
@@ -126,6 +172,7 @@ while [ -z "$USERNAME" ] || [ "$USERNAME" = "@no_username" ]; do
   USERNAME=$(sed -n 's/.*username=\(@[^ ]*\).*/\1/p' <<<"$ACCT")
 done
 ok "вхід виконано: $USERNAME"
+filled BRAND || setenv BRAND "$USERNAME"   # ім'я акаунта в сповіщеннях і в меню майстра
 if ! grep -q "premium=True" <<<"$ACCT"; then
   say "На цьому акаунті нема Telegram Premium — без нього розсилка не працює."
   echo "  Увімкни Premium і запусти майстер ще раз:  bash setup.sh"; exit 1
@@ -174,14 +221,15 @@ fi
 
 say "Крок 6/6. Вступ у групи і запуск"
 chmod +x join_step.sh
-if crontab -l 2>/dev/null | grep -q "broadcast.py.*# tg-broadcast-kit"; then
+if crontab -l 2>/dev/null | grep -F "$DIR/" | grep -q "broadcast.py.*# tg-broadcast-kit"; then
   bash install.sh --cron >/dev/null   # розклад уже був — просто оновлюємо його до свіжої версії
   ok "розсилка вже працює за розкладом"
   say "Готово! Все перевірено, розсилка працює. Це вікно можна закрити."
+  echo "  Ще один акаунт на цей сервер — та сама команда, у меню напиши «новий»."
   exit 0
 fi
 [ -f join.log ] && { echo "  Як іде вступ у групи (останні рядки):"; grep "вступив\|зупинено\|ПРОЙДЕНО" join.log | tail -2 | sed 's/^/    /' || true; }
-{ crontab -l 2>/dev/null | grep -v "# tg-join-temp" || true
+{ crontab -l 2>/dev/null | grep -vF "$DIR/join_step.sh # tg-join-temp" || true
   echo "7 * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
 flock -u 8; exec 8>&-   # відпускаємо акаунт, щоб вступ у групи міг почати одразу
 if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 & fi
@@ -193,3 +241,4 @@ echo "  якщо Telegram попросить паузу — до 2–3 днів,
 echo "  Коли закінчить, розсилка ввімкнеться сама, а тобі в Telegram прийде"
 echo "  повідомлення «✅ Акаунт вступив у групи, розсилка увімкнена»."
 echo "  Далі пости йдуть кожні 2 години. Це вікно можна закрити."
+echo "  Ще один акаунт на цей сервер — та сама команда, у меню напиши «новий»."
