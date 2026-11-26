@@ -6,7 +6,9 @@ import common as k
 
 DAYS = int(next((a for a in sys.argv[1:] if a.isdigit()), 7))
 DRY = "--dry" in sys.argv
-AUTO_PREFIX = (k.CFG.get("LEAD_REPLY") or "Привет! Спасибо за сообщение")[:25]
+# ponytail: авто-відповіді прибрано 26.11.2026; фільтр лише щоб старі авто-відповіді не рахувались
+# як живі. Після грудня 2026 можна видалити разом з умовою нижче.
+AUTO_PREFIX = "Привет! Спасибо за сообщение 🙌"
 
 
 async def report(cl) -> str:
@@ -30,7 +32,7 @@ async def report(cl) -> str:
     head = f"{k.BRAND}: лідів {leads}, без відповіді {leads - len(lags)}"
     if lags:
         head += f", медіана відповіді {statistics.median(lags):.1f} год"
-    return (f"📊 Ліди за {DAYS} дн (без авто-відповідей, лише живі)\n\n" + head
+    return (f"📊 Ліди за {DAYS} дн\n\n" + head
             + ("\n" + "\n".join(lines) if lines else ""))
 
 

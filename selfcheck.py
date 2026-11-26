@@ -17,7 +17,7 @@ from dotenv import dotenv_values
 env = dotenv_values(os.path.join(KIT, ".env.example"))
 groups = [g.strip() for g in env["TELEGRAM_TARGET_GROUPS"].split(",") if g.strip()]
 ok(f".env.example: {len(groups)} груп, усі виду @name", len(groups) == 81 and all(re.fullmatch(r"@[A-Za-z0-9_]{4,32}", g) for g in groups))
-ok(".env.example: LEAD_REPLY з переносами рядків", "\n" in env["LEAD_REPLY"] and "\\n" not in env["LEAD_REPLY"])
+ok(".env.example: авто-відповіді нема", "LEAD_REPLY" not in env)
 ok(".env.example: три порожні поля для учня", all(env.get(k) == "" for k in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH", "OWNER_ID")))
 cron = [l for l in open(os.path.join(KIT, "crontab.example")).read().splitlines() if l.strip()]
 ok("crontab.example: 5 завдань з маркером", len(cron) == 5 and all(l.endswith("# tg-broadcast-kit") and len(l.split()) >= 7 for l in cron))
@@ -34,7 +34,7 @@ for f in os.listdir(KIT):
 open(os.path.join(tmp, ".env"), "w").write(
     "TELEGRAM_API_ID=12345\nTELEGRAM_API_HASH=" + "a" * 32 + f"\nOWNER_ID={OWNER}\nBRAND=Test\n"
     "TELEGRAM_SESSION_NAME=sender\nTELEGRAM_MIN_WAIT=0\nTELEGRAM_MAX_WAIT=0\nTELEGRAM_START_JITTER=0\n"
-    'LEAD_REPLY="Привет! Спасибо за сообщение"\nTELEGRAM_TARGET_GROUPS=@g1,@g2,@g3\n')
+    "TELEGRAM_TARGET_GROUPS=@g1,@g2,@g3\n")
 open(os.path.join(tmp, "sender.session"), "w").write("fake")
 sys.path.insert(0, tmp)
 os.chdir(tmp)
@@ -195,24 +195,22 @@ LeadFake.history = [
 Fake.sent.clear()
 seen = {}
 new = asyncio.run(lead_reply.handle(LeadFake("x", 1, "h"), seen))
-ok("lead_reply: авто-відповідь лише тій, що написала перша без відповіді", len(Fake.sent) == 1 and Fake.sent[0][0].id == 1 and Fake.sent[0][1] == "Привет! Спасибо за сообщение")
-ok("lead_reply: 2 сповіщення (новий лід + «вже відповіли»), власник/бот/наш-перший пропущені", len(new) == 2 and any("Anna" in n and "надіслана" in n for n in new) and any("Bella" in n and "вже відповіли" in n for n in new) and str(OWNER) not in seen)
-Fake.sent.clear()
+ok("lead_reply: ліду нічого не пишемо", not Fake.sent)
+ok("lead_reply: 2 сповіщення (чекає відповіді + «вже відповіли»), власник/бот/наш-перший пропущені", len(new) == 2 and any("Anna" in n and "чекає твоєї відповіді" in n for n in new) and any("Bella" in n and "вже відповіли" in n for n in new) and str(OWNER) not in seen)
 from telethon.errors import InputUserDeactivatedError
 
 
 class DeadFake(LeadFake):
-    async def send_message(self, peer, text):
+    async def get_messages(self, peer, limit=None):
         if peer.id == 50:
             raise InputUserDeactivatedError(request=None)
-        Fake.sent.append((peer, text))
+        return await super().get_messages(peer, limit)
 
 
 LeadFake.history.insert(0, (user(50, "Deleted"), [Msg(9, "привіт")]))
 seen_dead, saves = {}, []
 new_dead = asyncio.run(lead_reply.handle(DeadFake("x", 1, "h"), seen_dead, save=lambda: saves.append(1)))
-ok("lead_reply: видалений акаунт не зупиняє обробку — наступний лід отримав відповідь",
-   any(p.id == 1 for p, _ in Fake.sent) and "50" in seen_dead and any("не дійшла" in n for n in new_dead))
+ok("lead_reply: битий діалог не зупиняє обробку — наступний лід є в сповіщеннях", any("Anna" in n for n in new_dead) and not Fake.sent)
 ok("lead_reply: стан зберігається після кожного ліда", len(saves) >= 2)
 LeadFake.history.pop(0)
 Fake.sent.clear()

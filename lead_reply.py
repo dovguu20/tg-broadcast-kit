@@ -1,21 +1,19 @@
-"""Нові вхідні в особисті на акаунті розсилки: авто-перша відповідь + сповіщення власнику.
+"""Нові вхідні в особисті на акаунті розсилки → сповіщення власнику. Ліду НІЧОГО не пишемо.
 Крон кожні 5 хв (під session.lock — одна сесія за раз). Стан leads_seen.json: user_id → коли
-побачили; пишеться після КОЖНОГО ліда. Де вже є наша вихідна — не відповідає.
-Один «битий» діалог (видалений акаунт, нас заблокували) не зупиняє обробку решти.
+побачили; пишеться після КОЖНОГО ліда. Один «битий» діалог не зупиняє обробку решти.
 --seed лише запам'ятовує наявні діалоги (обов'язково один раз перед кроном). --dry нічого не шле."""
 import os, sys, json, time, asyncio
 from telethon.errors import RPCError
 from telethon.tl.types import User
 import common as k
 
-REPLY = k.CFG.get("LEAD_REPLY") or "Привет! Спасибо за сообщение 🙌 Менеджер скоро ответит."
 SEED = "--seed" in sys.argv
 DRY = "--dry" in sys.argv
 STATE = os.path.join(k.BASE_DIR, "leads_seen.json")
 
 
 async def handle(cl, seen: dict, save=lambda: None) -> list:
-    """Оновлює seen, шле авто-відповіді, повертає тексти сповіщень власнику."""
+    """Оновлює seen, повертає тексти сповіщень власнику. Ліду не шле нічого."""
     new = []
     async for dl in cl.iter_dialogs():
         e = dl.entity
@@ -33,18 +31,9 @@ async def handle(cl, seen: dict, save=lambda: None) -> list:
                            "user": e.username, "our_first": bool(first.out)}
         if SEED or first.out:
             continue  # старий діалог або ми написали першими — не лід
-        answered = any(m.out for m in msgs)
         text = (first.message or "[медіа]").replace("\n", " ")[:120]
-        tag = "вже відповіли" if answered else ("DRY" if DRY else "авто-відповідь надіслана")
-        if not answered and not DRY:
-            try:
-                await cl.send_message(e, REPLY)
-                await asyncio.sleep(1)
-            except RPCError as err:  # акаунт видалено / нас заблокували — лід усе одно показуємо власнику
-                tag = f"авто-відповідь не дійшла ({type(err).__name__})"
-                answered = True
-        seen[str(e.id)]["auto_replied"] = not answered
-        save()  # до сповіщення: якщо далі щось впаде, людині не прийде друга авто-відповідь
+        tag = "вже відповіли" if any(m.out for m in msgs) else "чекає твоєї відповіді"
+        save()  # до сповіщення: якщо далі щось впаде, лід не задублюється
         who = f"{seen[str(e.id)]['name']} @{e.username}" if e.username else f"{seen[str(e.id)]['name']} (id {e.id})"
         new.append(f"🔔 Новий лід на {k.BRAND}: {who}\n«{text}»\n{tag}")
     return new
