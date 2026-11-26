@@ -4,10 +4,13 @@
 # Запускати на сервері (Ubuntu 22.04/24.04) від root:
 #   curl -fsSL https://github.com/dovguu20/tg-broadcast-kit/raw/main/setup.sh -o setup.sh && bash setup.sh
 # Повторний запуск безпечний: що вже зроблено — пропускає, налаштування й вхід зберігає.
-# Кілька акаунтів на одному сервері: та сама команда, у меню «новий». Кожен акаунт живе
-# у своїй папці (/root/broadcast, /root/broadcast-2, ...) зі своїм входом, текстами й розкладом.
+# Майстер підключає TARGET акаунтів по черзі: після одного сам переходить до наступного.
+# Кожен акаунт живе у своїй папці (/root/broadcast, /root/broadcast-2, ...) зі своїм входом,
+# текстами й розкладом. Перерване продовжується тією ж командою.
 set -euo pipefail
 REPO=https://github.com/dovguu20/tg-broadcast-kit
+TARGET=3   # скільки акаунтів підключає учень (Макс, 26.11)
+SELF=$(readlink -f "$0")
 DIR=/root/broadcast
 NEW=
 
@@ -18,6 +21,28 @@ ask() { local v; while :; do read -r -p "  > " v </dev/tty; v=${v//[[:space:]]/}
         if [[ $v =~ $2 ]]; then printf -v "$1" '%s' "$v"; return; fi
         echo "  Не схоже на правильне значення. Спробуй ще раз."; done; }
 pause() { read -r -p "  $1" _ </dev/tty; }
+# Акаунт готовий: якщо підключено менше TARGET — одразу ведемо до наступного.
+next_account() {
+  local have=0 d a
+  for d in /root/broadcast /root/broadcast-[0-9]*; do
+    [ -f "$d/.env" ] && { crontab -l 2>/dev/null || true; } | grep -qF "$d/" && have=$((have + 1))
+  done
+  if [ "$have" -ge "$TARGET" ]; then say "Усі $TARGET акаунти підключені. Це вікно можна закрити."; exit 0; fi
+  say "Тепер підключаємо акаунт $((have + 1)) з $TARGET."
+  echo "  Для нього потрібне те саме, що для першого: окремий акаунт з Premium, хмарним"
+  echo "  паролем і @username, і ЙОГО ВЛАСНІ api_id і api_hash (my.telegram.org з номера саме"
+  echo "  цього акаунта). Твій особистий id майстер візьме сам. Перші акаунти працюють далі."
+  while :; do
+    read -r -p "  Готовий — натисни Enter. Зробиш пізніше — напиши «потім»: " a </dev/tty; a=${a//[[:space:]]/}
+    [[ -z $a || $a =~ ^(так|Так|да|Да|y|Y)$ ]] && break
+    if [[ $a =~ ^(потім|Потім|потом|Потом|пізніше|позже|later)$ ]]; then
+      echo "  Добре. Коли будеш готовий — встав ту саму команду, майстер почне з акаунта $((have + 1))."
+      exit 0
+    fi
+  done
+  exec 8>&- 7>&-   # відпускаємо акаунт і замок майстра — новий запуск візьме їх сам
+  NEXT=1 exec bash "$SELF"   # NEXT — без повторного питання «Enter — почати»
+}
 
 [ "$(id -u)" = 0 ] || { echo "Запусти від root: спочатку ssh root@IP_сервера"; exit 1; }
 umask 077   # логи й стан із даними лідів — лише для root
@@ -44,39 +69,76 @@ if [ ${#ACCOUNTS[@]} -gt 0 ]; then
       || echo "  Не вдалось оновити $d (інтернет на сервері?)."; }
   done
 fi
-# Єдиний акаунт, який ще не доставлений до кінця (у розкладі його нема), — просто продовжуємо його.
-if [ ${#ACCOUNTS[@]} = 1 ] && ! { crontab -l 2>/dev/null || true; } | grep -qF "${ACCOUNTS[0]}/"; then
-  DIR=${ACCOUNTS[0]}
-elif [ ${#ACCOUNTS[@]} -gt 0 ]; then
-  say "На цьому сервері вже є акаунти розсилки:"
-  for i in "${!ACCOUNTS[@]}"; do
-    d=${ACCOUNTS[$i]}; name=$(grep -E '^BRAND=' "$d/.env" | head -1 | cut -d= -f2- || true)
-    [ -n "$name" ] || name=$(flock -n "$d/session.lock" timeout 30 "$d/venv/bin/python" "$d/check_account.py" 2>/dev/null \
-                             | sed -n 's/.*username=\(@[^ ]*\).*/\1/p' || true)
-    echo "  $((i + 1)) — ${name:-акаунт у папці $d}"
-  done
-  echo "  Напиши номер, щоб перевірити або доналаштувати цей акаунт,"
-  echo "  або «новий», щоб додати на цей сервер ще один акаунт."
+in_cron() { { crontab -l 2>/dev/null || true; } | grep -qF "$1/"; }   # акаунт дійшов до вступу в групи
+acct_name() {
+  local n; n=$(grep -E '^BRAND=' "$1/.env" | head -1 | cut -d= -f2- || true)
+  [ -n "$n" ] || n=$(flock -n "$1/session.lock" timeout 30 "$1/venv/bin/python" "$1/check_account.py" 2>/dev/null \
+                     | sed -n 's/.*username=\(@[^ ]*\).*/\1/p' || true)
+  printf '%s' "${n:-акаунт у папці $1}"
+}
+new_dir() {
+  local last n=1
+  [ ${#ACCOUNTS[@]} = 0 ] && { echo /root/broadcast; return; }
+  last=${ACCOUNTS[${#ACCOUNTS[@]}-1]}; [[ $last =~ -([0-9]+)$ ]] && n=$((10#${BASH_REMATCH[1]}))
+  echo "/root/broadcast-$((n + 1))"
+}
+pick_menu() {
+  local i c
+  say "Акаунти розсилки на цьому сервері:"
+  for i in "${!ACCOUNTS[@]}"; do echo "  $((i + 1)) — $(acct_name "${ACCOUNTS[$i]}")"; done
+  echo "  Напиши номер акаунта, який перевірити або полагодити,"
+  echo "  або «новий», щоб додати ще один акаунт."
   while :; do
     read -r -p "  > " c </dev/tty; c=${c//[[:space:]]/}
     if [[ $c =~ ^[0-9]+$ ]] && [ "$c" -ge 1 ] && [ "$c" -le ${#ACCOUNTS[@]} ]; then
-      DIR=${ACCOUNTS[$((c - 1))]}; break
+      DIR=${ACCOUNTS[$((c - 1))]}; return
     elif [[ $c =~ ^(новий|Новий|новый|Новый|нов|n|N|new|New|ytdbq)$ ]]; then
-      last=${ACCOUNTS[${#ACCOUNTS[@]}-1]}; n=1; [[ $last =~ -([0-9]+)$ ]] && n=$((10#${BASH_REMATCH[1]}))
-      DIR=/root/broadcast-$((n + 1)); NEW=1
-      # Папка, де новий акаунт кинули до входу (нема розкладу і вхід не виконано), — беремо її, а не плодимо нову.
-      for d in "${ACCOUNTS[@]}"; do
-        { crontab -l 2>/dev/null || true; } | grep -qF "$d/" && continue
-        rc=0; st=$(flock -n -E 75 "$d/session.lock" timeout 30 "$d/venv/bin/python" "$d/check_account.py" 2>/dev/null) || rc=$?
-        # 75 — з акаунтом зараз працює розсилка, 124 — Telegram не відповів: такі папки не чіпаємо.
-        if [ $rc != 75 ] && [ $rc != 124 ] && ! grep -q "authorized=true" <<<"$st"; then DIR=$d; break; fi
-      done
-      break
+      DIR=$(new_dir); NEW=1; return
     fi
     echo "  Напиши номер зі списку (1, 2, ...) або «новий»."
   done
-  ok "працюю з папкою $DIR"
+}
+
+# Enter — йдемо далі по акаунтах; «перевірити» — меню, щоб полагодити готовий акаунт.
+# Інші відповіді не приймаємо: випадкове слово не повинно починати новий акаунт.
+go_or_check() {
+  local c
+  echo "  Enter — $1."
+  echo "  Прийшов полагодити розсилку (прийшло ⛔️ чи ⚠️)? Напиши «перевірити»."
+  while :; do
+    read -r -p "  > " c </dev/tty; c=${c//[[:space:]]/}
+    [[ -z $c || $c =~ ^(так|Так|да|Да|y|Y)$ ]] && return 0
+    [[ $c =~ ^(перевірити|Перевірити|проверить|Проверить|проверити|check)$ ]] && return 1
+    echo "  Натисни Enter або напиши «перевірити»."
+  done
+}
+UNFIN=; DONE=0   # UNFIN — акаунт, який почали, але не довели до кінця; DONE — скільки готових
+for d in "${ACCOUNTS[@]+"${ACCOUNTS[@]}"}"; do
+  if in_cron "$d"; then DONE=$((DONE + 1)); elif [ -z "$UNFIN" ]; then UNFIN=$d; fi
+done
+show_done() { say "Уже працюють:"; for d in "${ACCOUNTS[@]}"; do in_cron "$d" && echo "  ✓ $(acct_name "$d")"; done; true; }
+if [ ${#ACCOUNTS[@]} = 0 ]; then
+  say "Підключаємо акаунт 1 з $TARGET. Після нього майстер сам перейде до наступного."
+elif [ -n "$UNFIN" ]; then
+  for i in "${!ACCOUNTS[@]}"; do [ "${ACCOUNTS[$i]}" = "$UNFIN" ] && K=$((i + 1)); done
+  if [ "$DONE" = 0 ] || [ -n "${NEXT:-}" ]; then
+    say "Продовжуємо акаунт $K з $TARGET."; DIR=$UNFIN
+  else
+    show_done; say "Акаунт $K з $TARGET ще не доставлений до кінця."
+    if go_or_check "продовжити його"; then DIR=$UNFIN; else pick_menu; fi
+  fi
+  [ "$DIR" = "${ACCOUNTS[0]}" ] || [ "$DIR" != "$UNFIN" ] || NEW=1
+elif [ ${#ACCOUNTS[@]} -lt $TARGET ]; then
+  if [ -n "${NEXT:-}" ]; then
+    say "Підключаємо акаунт $(( ${#ACCOUNTS[@]} + 1 )) з $TARGET."; DIR=$(new_dir); NEW=1
+  else
+    show_done; say "Наступний — акаунт $(( ${#ACCOUNTS[@]} + 1 )) з $TARGET."
+    if go_or_check "підключити його"; then DIR=$(new_dir); NEW=1; else pick_menu; fi
+  fi
+else
+  pick_menu
 fi
+[ "$DIR" = /root/broadcast ] || ok "папка акаунта: $DIR"
 
 if [ -d "$DIR/.git" ]; then
   # Оновлення комплекту. Налаштування, вхід і стан (.env, *.session, *.json) git не чіпає.
@@ -237,9 +299,8 @@ chmod +x join_step.sh
 if crontab -l 2>/dev/null | grep -F "$DIR/" | grep -q "broadcast.py.*# tg-broadcast-kit"; then
   bash install.sh --cron >/dev/null   # розклад уже був — просто оновлюємо його до свіжої версії
   ok "розсилка вже працює за розкладом"
-  say "Готово! Все перевірено, розсилка працює. Це вікно можна закрити."
-  echo "  Ще один акаунт на цей сервер — та сама команда, у меню напиши «новий»."
-  exit 0
+  say "Готово! Все перевірено, розсилка працює."
+  next_account
 fi
 [ -f join.log ] && { echo "  Як іде вступ у групи (останні рядки):"; grep "вступив\|зупинено\|ПРОЙДЕНО" join.log | tail -2 | sed 's/^/    /' || true; }
 exec 6>/tmp/.tg-broadcast-cron.lock; flock -w 60 6 || true
@@ -247,7 +308,8 @@ exec 6>/tmp/.tg-broadcast-cron.lock; flock -w 60 6 || true
   echo "7 * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
 exec 6>&-
 flock -u 8; exec 8>&-   # відпускаємо акаунт, щоб вступ у групи міг почати одразу
-if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 & fi
+# 7>&- : вступ у групи йде годинами — він не повинен тримати замок майстра (інакше наступний запуск «уже запущено»).
+if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 7>&- & fi
 ok "вступ у групи запущено"
 
 say "Готово!"
@@ -255,5 +317,5 @@ echo "  Зараз акаунт вступає в групи — партіям�
 echo "  якщо Telegram попросить паузу — до 2–3 днів, майстер почекає сам."
 echo "  Коли закінчить, розсилка ввімкнеться сама, а тобі в Telegram прийде"
 echo "  повідомлення «✅ Акаунт вступив у групи, розсилка увімкнена»."
-echo "  Далі пости йдуть кожні 2 години. Це вікно можна закрити."
-echo "  Ще один акаунт на цей сервер — та сама команда, у меню напиши «новий»."
+echo "  Далі пости йдуть кожні 2 години."
+next_account
