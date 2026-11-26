@@ -27,8 +27,8 @@ async def main(mode: str) -> int:
             except ValueError:
                 return 1
         if mode == "done":
-            await k.alert(cl, "✅ Акаунт вступив у групи, розсилка увімкнена. "
-                              "Перший пост — найближчої парної години за Києвом.")
+            await k.alert(cl, f"✅ Акаунт вступив у групи, розсилка увімкнена: {k.BRAND}. "
+                              "Перший пост — за розкладом, протягом 2 годин.")
             return 0
         raise SystemExit(f"невідомий режим {mode}")
     finally:

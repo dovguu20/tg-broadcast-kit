@@ -134,11 +134,13 @@ if [ "${1:-}" = "--cron" ]; then
   tmp=$(mktemp)
   # Кілька акаунтів на одному сервері — кожен у своїй папці: /root/broadcast, /root/broadcast-2, ...
   # Міняємо лише рядки цієї папки, а прогони розносимо на 40 хв (:00, :40, потім :20 непарних годин).
-  n=1; [[ ${DIR##*/} =~ ^broadcast-([0-9]+)$ ]] && n=${BASH_REMATCH[1]}
-  off=$(( (n - 1) * 40 % 120 )); slot=()
+  # Після трьох акаунтів — зсув ще на 20 хв (:20, :00 непарних, :40 непарних), щоб не збігатися з першими.
+  n=1; [[ ${DIR##*/} =~ ^broadcast-([0-9]+)$ ]] && n=$((10#${BASH_REMATCH[1]}))
+  off=$(( ((n - 1) * 40 + (n - 1) / 3 * 20) % 120 )); slot=()
   [ "$off" = 0 ] || slot=(-e "1s#^0 \*/2 #$(( off % 60 )) $(( off / 60 ))-23/2 #")
+  exec 6>/tmp/.tg-broadcast-cron.lock; flock -w 60 6 || true   # акаунти не переписують розклад одночасно
   { crontab -l 2>/dev/null | awk -v d="$DIR/" '!(index($0, "# tg-broadcast-kit") && index($0, d))' || true; } > "$tmp"
-  sed -e "s#DIR#$DIR#g" "${slot[@]}" crontab.example >> "$tmp"
+  sed -e "s#DIR#$DIR#g" ${slot[@]+"${slot[@]}"} crontab.example >> "$tmp"
   crontab "$tmp"; rm -f "$tmp"
   echo "автоматику ввімкнено:"; crontab -l | grep -F "$DIR/" | grep "# tg-broadcast-kit"
   exit 0

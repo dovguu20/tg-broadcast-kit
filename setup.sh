@@ -43,6 +43,11 @@ if [ ${#ACCOUNTS[@]} -gt 0 ]; then
     [ -d "$d/.git" ] && { git -C "$d" fetch -q origin main && git -C "$d" reset -q --hard origin/main \
       || echo "  Не вдалось оновити $d (інтернет на сервері?)."; }
   done
+fi
+# Єдиний акаунт, який ще не доставлений до кінця (у розкладі його нема), — просто продовжуємо його.
+if [ ${#ACCOUNTS[@]} = 1 ] && ! { crontab -l 2>/dev/null || true; } | grep -qF "${ACCOUNTS[0]}/"; then
+  DIR=${ACCOUNTS[0]}
+elif [ ${#ACCOUNTS[@]} -gt 0 ]; then
   say "На цьому сервері вже є акаунти розсилки:"
   for i in "${!ACCOUNTS[@]}"; do
     d=${ACCOUNTS[$i]}; name=$(grep -E '^BRAND=' "$d/.env" | head -1 | cut -d= -f2- || true)
@@ -57,8 +62,16 @@ if [ ${#ACCOUNTS[@]} -gt 0 ]; then
     if [[ $c =~ ^[0-9]+$ ]] && [ "$c" -ge 1 ] && [ "$c" -le ${#ACCOUNTS[@]} ]; then
       DIR=${ACCOUNTS[$((c - 1))]}; break
     elif [[ $c =~ ^(новий|Новий|новый|Новый|нов|n|N|new|New|ytdbq)$ ]]; then
-      last=${ACCOUNTS[${#ACCOUNTS[@]}-1]}; n=1; [[ $last =~ -([0-9]+)$ ]] && n=${BASH_REMATCH[1]}
-      DIR=/root/broadcast-$((n + 1)); NEW=1; break
+      last=${ACCOUNTS[${#ACCOUNTS[@]}-1]}; n=1; [[ $last =~ -([0-9]+)$ ]] && n=$((10#${BASH_REMATCH[1]}))
+      DIR=/root/broadcast-$((n + 1)); NEW=1
+      # Папка, де новий акаунт кинули до входу (нема розкладу і вхід не виконано), — беремо її, а не плодимо нову.
+      for d in "${ACCOUNTS[@]}"; do
+        { crontab -l 2>/dev/null || true; } | grep -qF "$d/" && continue
+        rc=0; st=$(flock -n -E 75 "$d/session.lock" timeout 30 "$d/venv/bin/python" "$d/check_account.py" 2>/dev/null) || rc=$?
+        # 75 — з акаунтом зараз працює розсилка, 124 — Telegram не відповів: такі папки не чіпаємо.
+        if [ $rc != 75 ] && [ $rc != 124 ] && ! grep -q "authorized=true" <<<"$st"; then DIR=$d; break; fi
+      done
+      break
     fi
     echo "  Напиши номер зі списку (1, 2, ...) або «новий»."
   done
@@ -229,8 +242,10 @@ if crontab -l 2>/dev/null | grep -F "$DIR/" | grep -q "broadcast.py.*# tg-broadc
   exit 0
 fi
 [ -f join.log ] && { echo "  Як іде вступ у групи (останні рядки):"; grep "вступив\|зупинено\|ПРОЙДЕНО" join.log | tail -2 | sed 's/^/    /' || true; }
+exec 6>/tmp/.tg-broadcast-cron.lock; flock -w 60 6 || true
 { crontab -l 2>/dev/null | grep -vF "$DIR/join_step.sh # tg-join-temp" || true
   echo "7 * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
+exec 6>&-
 flock -u 8; exec 8>&-   # відпускаємо акаунт, щоб вступ у групи міг почати одразу
 if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 & fi
 ok "вступ у групи запущено"

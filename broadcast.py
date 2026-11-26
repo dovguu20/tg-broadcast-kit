@@ -216,7 +216,8 @@ async def main() -> None:
     if len(saved) < AB_COUNT:
         log.error("У 'Збережених' %d повідомлень, а треба %d (A і B) — розсилку пропущено.", len(saved), AB_COUNT)
         try:
-            await alert(client, f"⚠️ Розсилка: у «Збережених» акаунта {len(saved)} повідомлень, а треба {AB_COUNT}. "
+            who = f"@{me.username}" if getattr(me, "username", None) else getattr(me, "first_name", "?")
+            await alert(client, f"⚠️ Розсилка: у «Збережених» акаунта {who} {len(saved)} повідомлень, а треба {AB_COUNT}. "
                                 "Надішли собі туди оголошення: спочатку B, потім A.")
         except Exception:
             log.exception("Не вдалось надіслати тривогу про «Збережені»")

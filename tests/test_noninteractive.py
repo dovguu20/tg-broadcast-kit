@@ -354,7 +354,7 @@ def test_apply_env_and_install(tmp: Path) -> None:
         '  if [ -s "$store" ]; then cat "$store"; exit 0; fi\n'
         "  exit 1\n"
         "fi\n"
-        'cat "$1" > "$store"\n'
+        'cat "$1" > "$store.tmp" && mv "$store.tmp" "$store"\n'  # як справжній crontab: без гонки з «crontab -l |»
         "exit 0\n",
         encoding="utf-8",
     )
@@ -399,6 +399,17 @@ def test_several_accounts(tmp: Path, store: Path, cron_env: dict) -> None:
     check("другий акаунт: прогін зсунутий на :40", any(l.startswith("40 0-23/2 * * * ") and "broadcast.py" in l for l in b))
     run(first, "install.sh", "--cron")
     check("повторний --cron першого не чіпає другий", mine(second) == b and len(mine(first)) == len(a))
+
+    # Четвертий акаунт не збігається з першим (:00), номер з нулем не ламає арифметику.
+    fourth = tmp / "srv" / "broadcast-04"
+    fourth.mkdir()
+    for name in ("install.sh", "crontab.example"):
+        shutil.copy(ROOT / name, fourth / name)
+    (fourth / ".env").write_text((tmp / ".env").read_text(encoding="utf-8"), encoding="utf-8")
+    proc = run(fourth, "install.sh", "--cron")
+    check("четвертий акаунт: прогін о :20 парних", proc.returncode == 0
+          and any(l.startswith("20 0-23/2 * * * ") and "broadcast.py" in l for l in mine(fourth))
+          and mine(second) == b)
 
     # join_step другого акаунта, коли список пройдено, прибирає лише СВІЙ рядок вступу.
     fake = second / "venv" / "bin"
