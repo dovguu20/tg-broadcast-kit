@@ -153,13 +153,15 @@ def absorb_stdin_secrets(stdin=None):
         os.environ[key] = str(data[key])
 
 
-def send_code_decision(authorized, session_exists, pending, resend):
+def send_code_decision(authorized, session_exists, pending, resend, phone=""):
     """Чи слати новий код. Чиста функція, без мережі."""
     if authorized:
         return "already_authorized"
     if not session_exists:
         # Без файла сесії збережений phone_code_hash непридатний.
         return "send"
+    if pending and phone and pending.get("phone") not in (None, phone):
+        return "send"  # учень виправив номер: старий код був на інший номер
     if pending and pending.get("stage") == "password" and not resend:
         return "password_needed"
     if pending and not resend:
@@ -249,7 +251,8 @@ async def _send_login_code(client, api_id, api_hash, phone):
         "next_delivery": type(sent.next_type).__name__ if sent.next_type else None,
     }
     if delivery not in SUPPORTED_DELIVERY:
-        return "unsupported_delivery", pending, {"delivery": delivery}
+        # Без стану: інакше кожен --send-code відповідав би «код уже висить», а ввести його нікуди.
+        return "unsupported_delivery", None, {"delivery": delivery}
     return "code_sent", pending, {
         "delivery": delivery,
         "next_delivery": pending["next_delivery"],
@@ -306,7 +309,7 @@ async def run(mode="check", resend=False, base=BASE):
             if mode == "send-code":
                 # had_session — до connect(). Новий файл, який Telethon створив щойно,
                 # ще не робить старий phone_code_hash придатним.
-                decision = send_code_decision(authorized, had_session, load_pending(pend), resend)
+                decision = send_code_decision(authorized, had_session, load_pending(pend), resend, phone)
                 if decision == "already_authorized":
                     delete_pending(pend)
                     me = await client.get_me()

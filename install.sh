@@ -68,7 +68,7 @@ if [ "${1:-}" = "--status" ]; then
   emit session_name "$sess"
   if [ -f "${sess}.session" ]; then emit session present; else emit session missing; fi
   if [ -f "${sess}.login-status.json" ]; then
-    ev=$(grep -o '"event"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_]*"' "${sess}.login-status.json" | head -1 | sed 's/.*"//;s/"$//' || true)
+    ev=$(grep -o '"event"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_]*"' "${sess}.login-status.json" | head -1 | sed 's/.*:[[:space:]]*"//;s/"$//' || true)
     emit login_event "${ev:-unknown}"
   else
     emit login_event none

@@ -106,6 +106,8 @@ def test_decisions() -> None:
     check("send: --resend все одно шле", login_phone.send_code_decision(False, True, pending_code, True) == "send")
     check("send: без файла сесії старий хеш непридатний", login_phone.send_code_decision(False, False, pending_code, False) == "send")
     check("send: нема очікування", login_phone.send_code_decision(False, True, None, False) == "send")
+    check("send: номер виправили — шлемо новий код", login_phone.send_code_decision(False, True, pending_code, False, "+380999999999") == "send")
+    check("send: той самий номер — код уже висить", login_phone.send_code_decision(False, True, pending_code, False, pending_code["phone"]) == "code_already_pending")
     check("precheck: нема сесії", login_phone.sign_in_precheck(False, pending_code, "12345", "") == "session_missing")
     check("precheck: пароль ще не дали", login_phone.sign_in_precheck(True, pending_pw, "", "") == "password_needed")
     check("precheck: пароль є — треба підключатись", login_phone.sign_in_precheck(True, pending_pw, "", "secret") is None)
@@ -378,8 +380,19 @@ def test_bash_syntax() -> None:
         check(f"bash -n {name}", proc.returncode == 0)
 
 
+def test_unsupported_delivery() -> None:
+    from telethon.tl import types as tl
+    sent = tl.auth.SentCode(type=tl.auth.SentCodeTypeSetUpEmailRequired(), phone_code_hash="h")
+
+    async def fake(_req):
+        return sent
+    event, pending, _ = asyncio.run(login_phone._send_login_code(fake, 1, HASH, "+380670000000"))
+    check("непідтримана доставка: стан коду не пишемо", event == "unsupported_delivery" and pending is None)
+
+
 def main() -> None:
     test_decisions()
+    test_unsupported_delivery()
     with tempfile.TemporaryDirectory(prefix="kit-noninteractive-") as raw:
         tmp = Path(raw)
         test_phone_and_pending(tmp)

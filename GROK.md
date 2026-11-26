@@ -98,6 +98,13 @@ vps 'echo ok'
 сервер. Лише після «так» прибери старий ключ саме цієї адреси: `ssh-keygen -R "$VPS_IP"`,
 і підключись знову.
 
+## Одна програма з акаунтом за раз
+
+Розсилка, вступ у групи і перевірки по черзі беруть замок `session.lock`. Усі команди
+нижче, що відкривають акаунт, уже стоять за цим замком (`flock`). Не прибирай його.
+`BUSY` у відповіді означає, що зараз іде розсилка або вступ у групи. Почекай 10–15 хвилин
+і повтори. Не запускай нічого в обхід замка: два підключення одночасно рвуть розсилку.
+
 ## Крок 1. Сервер — стоп, поки учень не купить
 
 Спитай, чи сервер уже оплачений. Якщо ні — веди по одному кроку, не списком наперед.
@@ -157,7 +164,8 @@ vps 'cd /root/broadcast && venv/bin/python selfcheck.py'
 
 1. «Заведи окремий акаунт Telegram, не свій основний. З нього підуть оголошення,
    і його можуть обмежити — так буває з цим інструментом. Краще, щоб акаунту був
-   уже місяць. Постав ім'я і фото агенції.»
+   уже місяць. Постав ім'я і фото агенції і задай ім'я користувача @...
+   (Налаштування → Ім'я користувача): за ним ти потім напишеш акаунту «старт».»
    **Стоп**, доки учень не скаже, що акаунт є.
 2. «Увімкни на ньому Telegram Premium. Без цього розсилка не запуститься.»
    **Стоп.**
@@ -222,6 +230,11 @@ echo "exit:$?"
 | 2 | `rate_limited` | У JSON є `retry_after_seconds`. Чекай стільки і не повторюй раніше. |
 | 2 | `invalid_phone_format` / `phone_missing` | Попроси номер ще раз у приховане поле. |
 | 2 | `telegram_error` | Поле `error` — ім'я помилки. Не вигадуй новий код у циклі. |
+| 2 | `unsupported_delivery` | Telegram хоче код у спосіб, який комплект не підтримує (наприклад, пошта). **Стоп**: скажи учню зробити скрін і написати Максу. Код більше не проси. |
+| 2 | `connection_error` | Сервер не достукався до Telegram. Почекай хвилину і повтори той самий крок. |
+
+Код виходу 3 сам по собі ще не означає `password_needed`: `sshpass` теж повертає 3,
+коли не може підключитись. Дивись на `event` у JSON.
 
 `delivery` = `SentCodeTypeApp` — скажи: «Код прийде в сам Telegram акаунта розсилки,
 у службовий чат, не SMS. Як прийде — я попрошу його в окремому полі, в чат не пиши.»
@@ -249,6 +262,8 @@ echo "exit:$?"
 - `telegram_error` і в полі `error` є `PhoneCodeInvalidError` — попроси код ще раз, той самий хеш ще живий.
 - `PhoneCodeExpiredError` — скажи учню і лише тоді один раз `--send-code --resend`.
 - `PasswordHashInvalidError` — хмарний пароль не той. Попроси ще раз. Новий код не надсилай.
+- `session_missing` або `sign_in_not_ready` — коду ще не просили (або стан загубився): назад до `--send-code`.
+- `code_missing` — у JSON не було коду. Попроси код у приховане поле ще раз.
 
 Новий код (`--resend`) — тільки якщо учень каже, що код не прийшов, або код протух,
 і немає `rate_limited`. Не більше одного разу поспіль.
@@ -256,7 +271,7 @@ echo "exit:$?"
 Перевірка:
 
 ```bash
-vps 'cd /root/broadcast && venv/bin/python check_account.py'
+vps 'cd /root/broadcast && { flock -n -E 75 session.lock venv/bin/python check_account.py; [ $? != 75 ] || echo BUSY; }'
 ```
 
 Потрібно `authorized=true` і `premium=True`. Ім'я користувача можна сказати учню.
@@ -272,11 +287,12 @@ vps 'cd /root/broadcast && venv/bin/python check_account.py'
 **Стоп.** Потім:
 
 ```bash
-vps 'cd /root/broadcast && venv/bin/python wizard_check.py owner'; echo "exit:$?"
+vps 'cd /root/broadcast && flock -w 1800 session.lock venv/bin/python wizard_check.py owner'; echo "exit:$?"
 ```
 
 - `0` — лист видно, далі.
 - `1` — ще не видно. Попроси перевірити, що пише саме акаунту розсилки, і повтори.
+- `3` — перевірка не вдалась (зв'язок з Telegram). Почекай хвилину і повтори.
 - `2` — у `OWNER_ID` стоїть id самого акаунта розсилки. Попроси особистий id від
   @userinfobot і запиши його знову через `apply_env.py`.
 
@@ -294,7 +310,7 @@ vps 'cd /root/broadcast && venv/bin/python wizard_check.py owner'; echo "exit:$?
 **Стоп.** Коли учень напише, що надіслав:
 
 ```bash
-vps 'cd /root/broadcast && venv/bin/python wizard_check.py saved'
+vps 'cd /root/broadcast && flock -w 1800 session.lock venv/bin/python wizard_check.py saved'
 ```
 
 Покажи йому початки двох текстів і спитай: «Це твої оголошення, спочатку B, потім A?»
@@ -306,7 +322,7 @@ vps 'cd /root/broadcast && venv/bin/python wizard_check.py saved'
 не прийшли сповіщення «новий лід» (ліду розсилка нічого не пише):
 
 ```bash
-vps 'cd /root/broadcast && venv/bin/python lead_reply.py --seed'
+vps 'cd /root/broadcast && flock -w 1800 session.lock venv/bin/python lead_reply.py --seed'
 ```
 
 Далі вступ у групи **тільки** через `join_step.sh`. Він сам робить паузу, коли
@@ -365,7 +381,7 @@ vps 'tail -n 20 /root/broadcast/join.log || true'
    між кроками) — лише тоді:
 
 ```bash
-vps 'cd /root/broadcast && { [ -f leads_seen.json ] || venv/bin/python lead_reply.py --seed; } && bash install.sh --cron'
+vps 'cd /root/broadcast && { [ -f leads_seen.json ] || flock -w 1800 session.lock venv/bin/python lead_reply.py --seed; } && bash install.sh --cron'
 ```
 
 4. Акаунт досі в порядку: `check_account.py` → `authorized=true`, `premium=True`.
@@ -382,7 +398,7 @@ vps 'cd /root/broadcast && venv/bin/python selfcheck.py'
    триває близько двох хвилин:
 
 ```bash
-vps 'cd /root/broadcast && venv/bin/python broadcast.py --dry; tail -n 5 cron.log'
+vps 'cd /root/broadcast && { flock -n -E 75 session.lock venv/bin/python broadcast.py --dry; [ $? != 75 ] || echo BUSY; }; tail -n 5 cron.log'
 ```
 
 У лозі шукай рядок `DRY | варіанти: … | груп знайдено: N`.
@@ -418,19 +434,19 @@ vps "cd /root/broadcast && TELEGRAM_START_JITTER=0 TELEGRAM_TARGET_GROUPS='@од
 
 | Що у `--status` | Що робити |
 |---|---|
+| `broadcast_running=yes` | **спершу це**: нічого з цим акаунтом не запускай, почекай кінця прогону (до 50 хв) |
 | комплект не клоновано | крок 2 |
 | `api_id=empty` або `invalid` | крок 3, не чіпай вхід |
 | `session=missing` і `login_pending=no` | крок 4, `--send-code` |
 | `login_stage=code` | не надсилай новий код; спитай учня; `--sign-in` або один `--resend` |
 | `login_stage=password` | `--sign-in` лише з хмарним паролем |
-| `premium` не True | стоп, учень вмикає Premium |
+| `check_account.py` показує `premium=False` | стоп, учень вмикає Premium |
 | лист «старт» ще не видно | крок 5 |
 | тексти учень не підтвердив | крок 6, навіть якщо вступ уже йде |
 | тексти підтверджено, `join_cron=no`, `join_complete=no` | крок 7 |
 | `join_cron=yes` | не перевстановлюй; скажи прогрес `join_done` / `join_total` |
 | `join_complete=yes` і `broadcast_cron=5` | крок 8 |
 | `join_complete=yes` і `broadcast_cron=0` | одне відновлення з кроку 8, пункт 3 |
-| `broadcast_running=yes` | нічого іншого з цим акаунтом не запускай, почекай |
 
 ## Якщо щось пішло не так
 
