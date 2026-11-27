@@ -367,6 +367,17 @@ async def main() -> None:
         except Exception:
             log.exception("Не вдалось надіслати алерт про нульову доставку")
 
+    # Перший прогін з доставками — учню одне повідомлення, що розсилка пішла.
+    first_path = os.path.join(BASE_DIR, "first_run.txt")
+    if sent > 0 and not os.path.exists(first_path):
+        who = f"@{me.username}" if getattr(me, "username", None) else getattr(me, "first_name", "?")
+        try:
+            await alert(client, f"🚀 Розсилка {who} пішла: пост у {sent} з {len(targets)} груп. "
+                                "Далі сама, кожні 2 години.")
+        except Exception:
+            log.exception("Не вдалось надіслати повідомлення про перший прогін")
+        open(first_path, "w").write("ok")   # одна спроба: інакше невдала тривога повторювалась би щопрогону
+
     await client.disconnect()
     log.info("=== ФІНІШ | варіант: %s | надіслано: %d | помилок: %d | усього: %d | у вікні: %d ===",
              label, sent, failed, len(targets), len(waiting))

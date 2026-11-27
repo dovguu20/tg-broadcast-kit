@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -467,7 +468,7 @@ def test_owner_messages() -> None:
         common.BRAND = "@acc"
         for d, n in (("/root/broadcast", 1), ("/root/broadcast-2", 2), ("/root/broadcast-03", 3), ("/x/broadcast-old", 1)):
             common.BASE_DIR = d
-            assert wizard_check.acct() == f"Акаунт {n} (@acc)", (d, wizard_check.acct())
+            assert common.label() == f"Акаунт {n} (@acc)", (d, common.label())
         common.BASE_DIR = "/root/broadcast-2"
         for mode in ("joining", "running", "done"):
             assert "Акаунт 2 (@acc)" in wizard_check.MESSAGES[mode](), mode
@@ -477,20 +478,61 @@ def test_owner_messages() -> None:
             assert "4 годин" in wizard_check.MESSAGES["joining"]()
             Path(common.BASE_DIR, "join.log").write_text("СПИСОК ПРОЙДЕНО ПОВНІСТЮ\n", encoding="utf-8")
             assert "Вступ у групи пройдено" in wizard_check.MESSAGES["joining"](), "список пройдено — не обіцяти 4 години"
-            Path(common.BASE_DIR, "join.stop").touch()
-            assert "паузу" in wizard_check.MESSAGES["joining"](), "свіжа пауза від Telegram — не обіцяти 4 години"
-            old = os.path.getmtime(Path(common.BASE_DIR, "join.stop")) - 90000
-            os.utime(Path(common.BASE_DIR, "join.stop"), (old, old))
-            assert "паузу" not in wizard_check.MESSAGES["joining"](), "пауза старша за добу — вже не пауза"
+            stop = Path(common.BASE_DIR, "join.stop"); stop.touch()
+            soon = time.time() + 1800   # join_step.sh: час зміни join.stop = коли пробувати знову
+            os.utime(stop, (soon, soon))
+            text = wizard_check.MESSAGES["joining"]()
+            assert "паузу" in text and "через 1 год" in text, text
+            os.utime(stop, (soon + 86400, soon + 86400))
+            assert "через добу" in wizard_check.MESSAGES["joining"](), "PeerFlood — доба"
+            os.utime(stop, (soon - 7200, soon - 7200))
+            assert "паузу" not in wizard_check.MESSAGES["joining"](), "пауза минула (і старий join.stop від старого коду) — вже не пауза"
         common.BASE_DIR = "/root/broadcast-2"
-        assert "протягом 2 годин" in wizard_check.MESSAGES["done"]()
+        from datetime import datetime
+        tpl = Path(ROOT, "crontab.example").read_text(encoding="utf-8").splitlines()[0]   # справжній рядок розсилки
+        cron = "\n".join(m + tpl.replace("DIR", d)[len("0 */2"):] for m, d in (
+            ("0 */2", "/root/broadcast"), ("40 0-23/2", "/root/broadcast-2"), ("20 1-23/2", "/root/broadcast-3")))
+        at = datetime(2026, 11, 27, 13, 50)   # непарна година
+        for d, want in (("/root/broadcast", "приблизно через 10 хв"), ("/root/broadcast-2", "приблизно через 50 хв"),
+                        ("/root/broadcast-3", "приблизно через 1 год 30 хв")):
+            common.BASE_DIR = d
+            assert wizard_check.next_post(cron, at) == want, (d, wizard_check.next_post(cron, at))
+        common.BASE_DIR = "/root/broadcast-4"
+        assert wizard_check.next_post(cron, at) == "протягом 2 годин", "нема рядка — загальна фраза"
+        common.BASE_DIR = "/root/broadcast-2"
     finally:
         common.BASE_DIR, common.BRAND = saved
     print("ok owner messages")
 
 
+def test_join_pause() -> None:
+    """join_step.sh чекає стільки, скільки просить Telegram (FloodWait), а не завжди добу (кейс Руслана, сирий/143)."""
+    with tempfile.TemporaryDirectory() as d:
+        shutil.copy(ROOT / "join_step.sh", d)
+        os.makedirs(f"{d}/venv/bin")
+        fake = Path(d, "venv/bin/python")
+        fake.write_text('#!/bin/bash\necho call >> calls.txt\n'
+                        'echo "Вступ у групи зупинено: FloodWait 600 с"; echo "ПАУЗА 600"\n', encoding="utf-8")
+        fake.chmod(0o755)
+        run = lambda: subprocess.run(["bash", f"{d}/join_step.sh"], cwd=d, capture_output=True, timeout=30)
+        t0 = time.time(); run()
+        wait = os.path.getmtime(f"{d}/join.stop") - t0
+        assert 590 <= wait <= 610, wait
+        run()
+        assert Path(d, "calls.txt").read_text().count("call") == 1, "під час паузи вступ не запускається"
+        os.utime(f"{d}/join.stop", (t0 - 1, t0 - 1))
+        run()
+        assert Path(d, "calls.txt").read_text().count("call") == 2, "пауза минула — пробує знову"
+        fake.write_text('#!/bin/bash\necho "Вступ у групи зупинено: PeerFlood"\n', encoding="utf-8")
+        os.utime(f"{d}/join.stop", (t0 - 1, t0 - 1))
+        t0 = time.time(); run()
+        assert 86390 <= os.path.getmtime(f"{d}/join.stop") - t0 <= 86410, "без ПАУЗА — доба"
+    print("ok join pause")
+
+
 def main() -> None:
     test_decisions()
+    test_join_pause()
     test_owner_messages()
     test_unsupported_delivery()
     with tempfile.TemporaryDirectory(prefix="kit-noninteractive-") as raw:

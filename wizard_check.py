@@ -2,27 +2,42 @@
 owner: 0 = власник уже писав акаунту, 1 = ще ні, 2 = OWNER_ID це сам акаунт розсилки.
 joining / running / done — повідомлення учню в особисті (заодно перевірка, що сповіщення доходять)."""
 import os
-import re
 import sys
 import time
 import asyncio
+import subprocess
+from datetime import datetime, timedelta
 import common as k
 
 
-def acct() -> str:
-    """«Акаунт 2 (name)»: номер — з назви папки (broadcast-2), як у розкладі install.sh."""
-    m = re.fullmatch(r"broadcast-(\d+)", os.path.basename(k.BASE_DIR))
-    return f"Акаунт {int(m.group(1)) if m else 1} ({k.BRAND})"
+def next_post(cron: str | None = None, now: datetime | None = None) -> str:
+    """Скільки до першого прогону розсилки цієї папки — за її рядком у crontab (install.sh --cron)."""
+    try:
+        if cron is None:
+            cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10).stdout
+        line = next(l for l in cron.splitlines() if f"{k.BASE_DIR}/" in l and "broadcast.py" in l)
+        minute, hour = line.split()[:2]
+        even = int(hour.split("-")[0]) % 2 if hour[0].isdigit() else 0   # «0 */2» або «40 1-23/2»
+        now = (now or datetime.now()).replace(second=0, microsecond=0)
+        for add in range(3, 125):   # слот за 1–2 хв може зайняти сам join_step (session.lock) — не обіцяємо його
+            t = now + timedelta(minutes=add)
+            if t.minute == int(minute) and t.hour % 2 == even:
+                h, m = divmod(add, 60)
+                return f"приблизно через {h} год {m} хв" if h else f"приблизно через {m} хв"
+    except Exception:
+        pass
+    return "протягом 2 годин"
 
 
 # Вступ: 81 група партіями по 20 щогодини (join_step.sh), між вступами 60–100 с —
 # список проходить за 3,5–4 години. Розсилка вмикається лише після нього.
 def joining() -> str:
     """Повторний запуск майстра бачить і паузу від Telegram, і вже пройдений список (join_step.sh)."""
-    head = f"🟢 {acct()} підключено, сповіщення доходять. "
+    head = f"🟢 {k.label()} підключено, сповіщення доходять. "
     stop = os.path.join(k.BASE_DIR, "join.stop")
-    if os.path.exists(stop) and time.time() - os.path.getmtime(stop) < 86400:
-        return head + "Telegram попросив паузу у вступі в групи — наступна спроба автоматично через добу. " \
+    left = os.path.getmtime(stop) - time.time() if os.path.exists(stop) else 0
+    if left > 0:
+        return head + f"Telegram попросив паузу у вступі в групи — наступна спроба автоматично, {k.wait_text(left)}. " \
                       "Коли закінчить, прийде «✅ … вступив у групи»."
     try:
         passed = "СПИСОК ПРОЙДЕНО ПОВНІСТЮ" in open(os.path.join(k.BASE_DIR, "join.log"), encoding="utf-8", errors="replace").read()
@@ -36,8 +51,8 @@ def joining() -> str:
 
 MESSAGES = {
     "joining": joining,
-    "running": lambda: f"✅ Перевірка пройдена: {acct()} підключено, розсилка працює за розкладом, кожні 2 години.",
-    "done": lambda: f"✅ {acct()} вступив у групи, розсилка увімкнена. Перший пост — за розкладом, протягом 2 годин.",
+    "running": lambda: f"✅ Перевірка пройдена: {k.label()} підключено, розсилка працює за розкладом, кожні 2 години.",
+    "done": lambda: f"✅ {k.label()} вступив у групи, розсилка увімкнена. Перша розсилка — {next_post()}, далі кожні 2 години.",
 }
 
 

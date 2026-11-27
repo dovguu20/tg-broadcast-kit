@@ -29,6 +29,7 @@ async def main():
         print(f"{who}: у списку {len(TARGETS)}, лишилось {len(todo)}, за цей раз до {LIMIT}")
         joined = already = req = fail = 0
         stop = None
+        pause = 86400   # PeerFlood / ліміт груп — добу; FloodWait — скільки просить Telegram
         with open(DONE, "a") as log:
             for i, t in enumerate(todo[:LIMIT], 1):
                 try:
@@ -39,7 +40,7 @@ async def main():
                 except InviteRequestSentError:
                     req += 1; tag = "заявка на модерацію"
                 except FloodWaitError as e:
-                    stop = f"FloodWait {e.seconds} с"; break
+                    stop = f"FloodWait {e.seconds} с"; pause = e.seconds; break
                 except PeerFloodError:
                     stop = "PeerFlood — Telegram вважає дії спамом"; break
                 except ChannelsTooMuchError:
@@ -63,11 +64,21 @@ async def main():
         print("\n" + summary)
         if stop:
             print("Вступ у групи зупинено:", stop)
+            print(f"ПАУЗА {pause}")   # join_step.sh ставить join.stop саме на стільки
+            if pause < 3600:   # коротка пауза — наступна година продовжить сама; без тривоги, щоб не злити щогодини
+                return
             await k.alert(cl, f"⚠️ Вступ у групи зупинено: {who}\nПричина: {stop}\n{summary}\n"
-                              "Telegram просить паузу. Наступна спроба — автоматично через добу. "
+                              f"Telegram просить паузу. Наступна спроба — автоматично, {k.wait_text(pause)}. "
                               "Якщо повторюється кілька днів — напиши Максу.")
         elif left == 0:
             print("СПИСОК ПРОЙДЕНО ПОВНІСТЮ")
+        elif left < len(todo):   # партія щось пройшла (5xx Telegram не рахуються)
+            # Учень бачить, що вступ іде, і скільки ще чекати (партія щогодини, join_step.sh).
+            try:
+                await k.alert(cl, f"⏳ {k.label()}: пройдено {len(TARGETS) - left} з {len(TARGETS)} груп. "
+                                  f"Ще ~{-(-left // LIMIT)} год — потім розсилка ввімкнеться сама.")
+            except Exception as e:
+                print("повідомлення про прогрес не надіслалось:", type(e).__name__)
     finally:
         await cl.disconnect()
         k.cleanup(cp)

@@ -19,6 +19,20 @@ TOKEN = CFG.get("REPORT_BOT_TOKEN") or ""
 CHAT = CFG.get("REPORT_CHAT_ID") or ""
 
 
+def wait_text(seconds: float) -> str:
+    """Через скільки join_step.sh (щогодини) знову спробує вступ після паузи від Telegram."""
+    h = -(-max(int(seconds), 1) // 3600)
+    if h >= 36:
+        return f"приблизно через {-(-h // 24)} дн"
+    return "приблизно через добу" if h >= 20 else f"приблизно через {h} год"
+
+
+def label() -> str:
+    """«Акаунт 2 (name)» для повідомлень учню: номер — з назви папки (broadcast-2), як у розкладі install.sh."""
+    m = re.fullmatch(r"broadcast-(\d+)", os.path.basename(BASE_DIR))
+    return f"Акаунт {int(m.group(1)) if m else 1} ({BRAND})"
+
+
 def broadcast_running() -> bool:
     """Поки іде прогін, сесію не чіпає більше ніхто: дві сесії на одному auth key —
     Telegram рве з'єднання розсилки («account is likely misusing the session»)."""

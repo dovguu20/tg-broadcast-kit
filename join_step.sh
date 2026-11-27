@@ -6,10 +6,16 @@ cd "$(dirname "$(readlink -f "$0")")"
 umask 077
 exec 9>session.lock
 flock -n 9 || exit 0   # з акаунтом зараз працює майстер чи інша задача — наступної години
-# Telegram зупинив вступ (FloodWait/PeerFlood) — добу не пробуємо, щоб не злити тривогами.
-if [ -f join.stop ] && [ -n "$(find join.stop -mmin -1440)" ]; then exit 0; fi
-out=$(KIT_SESSION_LOCKED=1 venv/bin/python join_groups.py 20 2>&1); echo "$out" >> join.log
-if grep -q "Вступ у групи зупинено" <<<"$out"; then touch join.stop; exit 0; fi
+# Telegram зупинив вступ: час зміни join.stop = коли пробувати знову (FloodWait — скільки просить Telegram,
+# PeerFlood — добу). Раніше завжди була доба, навіть на FloodWait у кілька хвилин.
+if [ -f join.stop ] && [ "$(stat -c %Y join.stop)" -gt "$(date +%s)" ]; then exit 0; fi
+# timeout: зависла партія (мережа) інакше назавжди тримала б session.lock, і вступ мовчки стояв би
+out=$(KIT_SESSION_LOCKED=1 timeout 3000 venv/bin/python -u join_groups.py 20 2>&1); rc=$?; echo "$out" >> join.log
+[ "$rc" = 124 ] && echo "партію зупинено: timeout 3000 с (зависла) — наступна година продовжить" >> join.log
+if grep -q "Вступ у групи зупинено" <<<"$out"; then
+  p=$(sed -n 's/^ПАУЗА \([0-9][0-9]*\)$/\1/p' <<<"$out" | tail -1)
+  touch -d "@$(( $(date +%s) + ${p:-86400} ))" join.stop; exit 0
+fi
 grep -q "СПИСОК ПРОЙДЕНО ПОВНІСТЮ" <<<"$out" || exit 0
 [ -f leads_seen.json ] || venv/bin/python lead_reply.py --seed >> join.log 2>&1
 [ -f leads_seen.json ] || { echo "запам'ятати старі чати не вдалось — повторю наступної години" >> join.log; exit 1; }
