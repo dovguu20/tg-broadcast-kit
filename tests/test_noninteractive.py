@@ -458,8 +458,40 @@ def test_unsupported_delivery() -> None:
     check("непідтримана доставка: стан коду не пишемо", event == "unsupported_delivery" and pending is None)
 
 
+def test_owner_messages() -> None:
+    """Повідомлення учню в особисті називають номер акаунта (папка) і його ім'я (сирий/139 курсу)."""
+    import common
+    import wizard_check
+    saved = common.BASE_DIR, common.BRAND
+    try:
+        common.BRAND = "@acc"
+        for d, n in (("/root/broadcast", 1), ("/root/broadcast-2", 2), ("/root/broadcast-03", 3), ("/x/broadcast-old", 1)):
+            common.BASE_DIR = d
+            assert wizard_check.acct() == f"Акаунт {n} (@acc)", (d, wizard_check.acct())
+        common.BASE_DIR = "/root/broadcast-2"
+        for mode in ("joining", "running", "done"):
+            assert "Акаунт 2 (@acc)" in wizard_check.MESSAGES[mode](), mode
+        with tempfile.TemporaryDirectory() as d:
+            common.BASE_DIR = os.path.join(d, "broadcast-2")
+            os.mkdir(common.BASE_DIR)
+            assert "4 годин" in wizard_check.MESSAGES["joining"]()
+            Path(common.BASE_DIR, "join.log").write_text("СПИСОК ПРОЙДЕНО ПОВНІСТЮ\n", encoding="utf-8")
+            assert "Вступ у групи пройдено" in wizard_check.MESSAGES["joining"](), "список пройдено — не обіцяти 4 години"
+            Path(common.BASE_DIR, "join.stop").touch()
+            assert "паузу" in wizard_check.MESSAGES["joining"](), "свіжа пауза від Telegram — не обіцяти 4 години"
+            old = os.path.getmtime(Path(common.BASE_DIR, "join.stop")) - 90000
+            os.utime(Path(common.BASE_DIR, "join.stop"), (old, old))
+            assert "паузу" not in wizard_check.MESSAGES["joining"](), "пауза старша за добу — вже не пауза"
+        common.BASE_DIR = "/root/broadcast-2"
+        assert "протягом 2 годин" in wizard_check.MESSAGES["done"]()
+    finally:
+        common.BASE_DIR, common.BRAND = saved
+    print("ok owner messages")
+
+
 def main() -> None:
     test_decisions()
+    test_owner_messages()
     test_unsupported_delivery()
     with tempfile.TemporaryDirectory(prefix="kit-noninteractive-") as raw:
         tmp = Path(raw)
