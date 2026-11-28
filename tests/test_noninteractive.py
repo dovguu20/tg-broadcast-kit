@@ -447,6 +447,13 @@ def test_bash_syntax() -> None:
     for name in ("install.sh", "setup.sh", "join_step.sh"):
         proc = subprocess.run(["bash", "-n", str(ROOT / name)], check=False)
         check(f"bash -n {name}", proc.returncode == 0)
+    # «перевірити» має впізнаватись і в C-локалі сервера (кирилиця в [..] там ламається — аудит 28.11)
+    import re as _re
+    rx = _re.search(r'\$c =~ (\^\(перев[^ ]*\)) \]\] && return 1', (ROOT / "setup.sh").read_text(encoding="utf-8")).group(1)
+    for word in ("перевірити", "Перевірити", "проверить", "перевирити", "check"):
+        proc = subprocess.run(["bash", "-c", f'c="$1"; [[ $c =~ {rx} ]]', "_", word],
+                              env={**clean_env(), "LC_ALL": "C"}, check=False)
+        check(f"C-локаль: «{word}» = перевірити", proc.returncode == 0)
 
 
 def test_unsupported_delivery() -> None:
@@ -590,8 +597,61 @@ def test_qr_login() -> None:
     print("ok qr login")
 
 
+def test_login_flow() -> None:
+    """--login (аудит майстра 28.11): номер без «+», код з помилкою, хмарний пароль з помилкою, невідома доставка → QR."""
+    import contextlib, io
+    from telethon import errors as terr, types as ttypes
+
+    class Fake:
+        delivery = ttypes.auth.SentCodeTypeApp(length=5)
+        def __init__(self, *a, **kw): self.codes, self.passwords, self.phone = [], [], None
+        async def connect(self): pass
+        async def is_user_authorized(self): return False
+        async def disconnect(self): pass
+        async def __call__(self, req):
+            self.phone = req.phone_number
+            return ttypes.auth.SentCode(type=Fake.delivery, phone_code_hash="h")
+        async def sign_in(self, phone=None, code=None, phone_code_hash=None, password=None):
+            if password is not None:
+                self.passwords.append(password)
+                if len(self.passwords) == 1: raise terr.PasswordHashInvalidError(None)
+                return
+            self.codes.append(code)
+            if code == "11111": raise terr.PhoneCodeInvalidError(None)
+            raise terr.SessionPasswordNeededError(None)
+        async def get_me(self): return type("Me", (), {"premium": True})()
+
+    answers = []
+    async def fake_input(prompt): return answers.pop(0)
+    made = []
+    real = (login_phone.TelegramClient, login_phone.hidden, login_phone.visible, login_phone.qr_login)
+    login_phone.TelegramClient = lambda *a, **kw: made.append(Fake()) or made[-1]
+    login_phone.hidden = login_phone.visible = fake_input
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            write_env(Path(d))
+            answers[:] = ["380501234567", "11111", "22222", "bad", "good"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = asyncio.run(login_phone.run(mode="login", base=Path(d)))
+            c = made[-1]
+            check("номер без плюса — плюс додано", c.phone == "+380501234567")
+            check("код з помилкою — друга спроба без нового коду", c.codes == ["11111", "22222"])
+            check("пароль з помилкою — друга спроба", rc == 0 and c.passwords == ["bad", "good"])
+            Fake.delivery = ttypes.auth.SentCodeTypeEmailCode(apple_signin_allowed=False, google_signin_allowed=False,
+                                                             email_pattern="a***@b", length=6)
+            async def fake_qr(client): return True
+            login_phone.qr_login = fake_qr
+            answers[:] = ["+380501234567"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = asyncio.run(login_phone.run(mode="login", base=Path(d)))
+            check("доставка, яку майстер не вміє, — одразу QR, а не вихід", rc == 0 and made[-1].codes == [])
+    finally:
+        login_phone.TelegramClient, login_phone.hidden, login_phone.visible, login_phone.qr_login = real
+
+
 def main() -> None:
     test_decisions()
+    test_login_flow()
     test_qr_login()
     test_join_pause()
     test_owner_messages()

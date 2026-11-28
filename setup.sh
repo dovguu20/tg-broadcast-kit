@@ -35,7 +35,7 @@ next_account() {
   while :; do
     read -r -p "  Готовий — натисни Enter. Зробиш пізніше — напиши «потім»: " a </dev/tty; a=${a//[[:space:]]/}
     [[ -z $a || $a =~ ^(так|Так|да|Да|y|Y)$ ]] && break
-    if [[ $a =~ ^(потім|Потім|потом|Потом|пізніше|позже|later)$ ]]; then
+    if [[ $a =~ ^(потім|Потім|потом|Потом|пізніше|позже|later|ні|Ні|нет|Нет|no|No)$ ]]; then
       echo "  Добре. Коли будеш готовий — встав ту саму команду, майстер почне з акаунта $((have + 1))."
       exit 0
     fi
@@ -50,9 +50,11 @@ exec 7>/root/.tg-broadcast-setup.lock
 flock -n 7 || { echo "Майстер уже запущено в іншому вікні. Закрий зайве вікно і користуйся одним."; exit 1; }
 
 say "=== Установка розсилки ==="
+echo "  Вийти будь-коли — Ctrl+C. Потім та сама команда продовжить з того ж місця."
 say "Крок 1/6. Ставлю потрібні програми (1–3 хвилини)..."
 export DEBIAN_FRONTEND=noninteractive
 # Свіжий сервер перші хвилини сам оновлюється і тримає apt — чекаємо до 10 хв, а не падаємо.
+dpkg --configure -a >/dev/null 2>&1 || true   # минулого разу вікно закрили посеред встановлення
 for i in $(seq 1 40); do apt-get update -qq >/dev/null 2>&1 && break
   [ "$i" = 1 ] && echo "  Сервер ще сам оновлюється — чекаю (до 10 хвилин)..."; sleep 15; done
 apt-get -o DPkg::Lock::Timeout=600 install -y -qq git >/dev/null
@@ -94,6 +96,8 @@ pick_menu() {
       DIR=${ACCOUNTS[$((c - 1))]}; return
     elif [[ $c =~ ^(новий|Новий|новый|Новый|нов|n|N|new|New|ytdbq)$ ]]; then
       DIR=$(new_dir); NEW=1; return
+    elif [[ $c =~ ^(перев|Перев|пров|Пров|пер|Пер|check|Check) ]]; then
+      echo "  Напиши номер акаунта, який перевірити (1, 2, ...)."; continue
     fi
     echo "  Напиши номер зі списку (1, 2, ...) або «новий»."
   done
@@ -108,7 +112,8 @@ go_or_check() {
   while :; do
     read -r -p "  > " c </dev/tty; c=${c//[[:space:]]/}
     [[ -z $c || $c =~ ^(так|Так|да|Да|y|Y)$ ]] && return 0
-    [[ $c =~ ^(перевірити|Перевірити|проверить|Проверить|проверити|check)$ ]] && return 1
+    # перевірити / проверить / перевирити …; літерали, не [Пп]: у C-локалі сервера кирилиця в [..] ламається
+    [[ $c =~ ^(перев|Перев|пров|Пров|пер|Пер|check|Check) ]] && return 1
     echo "  Натисни Enter або напиши «перевірити»."
   done
 }
@@ -116,7 +121,9 @@ UNFIN=; DONE=0   # UNFIN — акаунт, який почали, але не д
 for d in "${ACCOUNTS[@]+"${ACCOUNTS[@]}"}"; do
   if in_cron "$d"; then DONE=$((DONE + 1)); elif [ -z "$UNFIN" ]; then UNFIN=$d; fi
 done
-show_done() { say "Уже працюють:"; for d in "${ACCOUNTS[@]}"; do in_cron "$d" && echo "  ✓ $(acct_name "$d")"; done; true; }
+joining() { { crontab -l 2>/dev/null || true; } | grep -qF "$1/join_step.sh # tg-join-temp"; }
+show_done() { say "Уже підключені:"; for d in "${ACCOUNTS[@]}"; do in_cron "$d" || continue
+  if joining "$d"; then echo "  ✓ $(acct_name "$d") — ще вступає в групи"; else echo "  ✓ $(acct_name "$d")"; fi; done; true; }
 if [ ${#ACCOUNTS[@]} = 0 ]; then
   say "Підключаємо акаунт 1 з $TARGET. Після нього майстер сам перейде до наступного."
 elif [ -n "$UNFIN" ]; then
@@ -124,7 +131,7 @@ elif [ -n "$UNFIN" ]; then
   if [ "$DONE" = 0 ] || [ -n "${NEXT:-}" ]; then
     say "Продовжуємо акаунт $K з $TARGET."; DIR=$UNFIN
   else
-    show_done; say "Акаунт $K з $TARGET ще не доставлений до кінця."
+    show_done; say "Акаунт $K з $TARGET ще не доведений до кінця."
     if go_or_check "продовжити його"; then DIR=$UNFIN; else pick_menu; fi
   fi
   [ "$DIR" = "${ACCOUNTS[0]}" ] || [ "$DIR" != "$UNFIN" ] || NEW=1
@@ -158,6 +165,7 @@ if ! flock -n 8; then
   echo "  Зараз іде розсилка (до ~50 хв). Чекаю, поки закінчиться, — вікно не закривай..."
   flock 8
 fi
+echo "  Ставлю програми для цього акаунта (1–3 хвилини). Вікно не закривай..."
 if ! bash install.sh > /tmp/broadcast-install.log 2>&1; then
   echo "  Помилка встановлення. Останні рядки:"; tail -5 /tmp/broadcast-install.log; exit 1
 fi
@@ -210,16 +218,12 @@ say "Крок 3/6. Вхід в акаунт розсилки"
 if venv/bin/python check_account.py 2>/dev/null | grep -q "authorized=true"; then
   ok "вхід уже виконано"
 else
-  echo "  Зараз попросить: номер акаунта розсилки (+380...), потім код, потім хмарний пароль."
-  echo "  Код зазвичай приходить у сам Telegram на телефоні з цим акаунтом; куди саме —"
-  echo "  програма напише нижче (Telegram / SMS / дзвінок). Символи не видно — це нормально."
+  echo "  Зараз попросить: номер акаунта розсилки (+380...), потім код, потім хмарний пароль"
+  echo "  (рос.: облачный пароль). Код приходить у Telegram на ТЕЛЕФОНІ з акаунтом розсилки —"
+  echo "  тримай його під рукою. Код і пароль при вводі не видно — це нормально."
   echo "  Код не приходить — замість коду напиши qr: увійдеш QR-кодом з телефона, без коду."
-  until venv/bin/python login_phone.py --login </dev/tty 2>&1 | tee /tmp/broadcast-login.log \
-          | { grep --line-buffered '"delivery_selected"' || true; } | sed -u \
-            -e 's/.*"delivery": "SentCodeTypeApp".*/  → Код прийде в Telegram (чат «Telegram» на телефоні)./' \
-            -e 's/.*"delivery": "SentCodeTypeSms.*/  → Код прийде в SMS./' \
-            -e 's/.*"delivery": "SentCodeTypeCall".*/  → Код продиктують дзвінком./' \
-            -e '/"delivery"/d' \
+  # Підказки й запити login_phone.py пише прямо в термінал; stdout (технічний журнал) — у файл для розбору помилки.
+  until venv/bin/python login_phone.py --login </dev/tty >/tmp/broadcast-login.log 2>&1 \
         && venv/bin/python check_account.py 2>/dev/null | grep -q "authorized=true"; do
     L=/tmp/broadcast-login.log
     echo "  Вхід не вдався."
@@ -231,32 +235,46 @@ else
       echo "  Увійди без коду, QR-кодом з телефона: напиши qr."
     elif grep -q 'qr_timeout' $L; then echo "  QR-код не відсканували (5 хвилин) або хмарний пароль тричі не той. Напиши qr ще раз."
     elif grep -q 'PhoneCodeInvalid\|PhoneCodeExpired' $L; then echo "  Код неправильний або застарів. Спробуй ще раз — прийде новий."
-    elif grep -q 'PasswordHashInvalid' $L; then echo "  Неправильний хмарний пароль акаунта розсилки."
-    elif grep -q 'rate_limited' $L; then echo "  Telegram просить почекати $(grep -o 'retry_after_seconds": [0-9]*' $L | grep -o '[0-9]*$' | tail -1) секунд перед новою спробою."
-    elif grep -q 'окремого підтримуваного\|unsupported_auth_response' $L; then
-      echo "  Telegram вибрав спосіб входу, який майстер не вміє (пошта, дзвінок-скидання тощо)."
-      echo "  Зроби скрін цього вікна і надішли Максу."; exit 1
+    elif grep -q 'PasswordHashInvalid\|password_failed' $L; then echo "  Хмарний пароль (рос.: облачный пароль) не той. Перевір його в Telegram: Налаштування → Конфіденційність."
+    elif grep -q 'rate_limited\|PhoneNumberFlood' $L; then
+      s=$(grep -o 'retry_after_seconds": [0-9]*' $L | grep -o '[0-9]*$' | tail -1)
+      if [ -n "$s" ] && [ "$s" -lt 3600 ]; then echo "  Telegram просить почекати з кодами ~$(( (s + 59) / 60 )) хв."
+      elif [ -n "$s" ]; then echo "  Telegram просить почекати з кодами ~$(( (s + 3599) / 3600 )) год."; else echo "  Telegram тимчасово не надсилає коди на цей номер (забагато спроб)."; fi
+      echo "  Не чекай: увійди QR-кодом — напиши qr. Ліміт на коди його не стосується."
+    elif grep -q 'unsupported_auth_response' $L; then echo "  Telegram вибрав спосіб входу, який майстер не вміє. Увійди QR-кодом: напиши qr."
+    elif grep -q 'connection_error' $L; then echo "  Немає зв'язку з Telegram. Спробуй ще раз за хвилину (Enter)."
     elif grep -q 'вже запущено' $L; then echo "  Вхід уже запущено в іншому вікні — закрий його."
     else echo "  Деталі:"; tail -2 $L | sed 's/^/    /'; fi
     read -r -p "  Enter — спробувати ще раз;  'qr' — увійти QR-кодом з телефона;  'ключі' (або k) — ввести api_id і api_hash заново: " a </dev/tty
     a=${a//[[:space:]]/}
     [[ $a == ключі || $a == ключи || $a == keys || $a == k || $a == K ]] && ask_keys
-    # QR — без фільтра виводу: код малюється в stdout. Удалось — наступний --login бачить вхід і пропускає.
+    # QR малюється прямо в термінал (/dev/tty). Удалось — наступний --login бачить вхід і пропускає.
     if [[ $a =~ ^(qr|QR|Qr|кр|КР|йк|ЙК)$ ]]; then
-      until venv/bin/python login_phone.py --qr </dev/tty; do
+      until venv/bin/python login_phone.py --qr </dev/tty >/tmp/broadcast-login.log 2>&1; do
         read -r -p "  QR не спрацював. Enter — новий QR-код;  'код' — назад до входу кодом: " b </dev/tty
         [[ ${b//[[:space:]]/} =~ ^(код|Код|code|kod)$ ]] && break
       done
     fi
   done
 fi
-ACCT=$(venv/bin/python check_account.py)
+acct() { until ACCT=$(venv/bin/python check_account.py 2>&1); do
+           echo "  Немає зв'язку з Telegram."; pause "Enter — спробувати ще раз..."; done; }
+acct
 USERNAME=$(sed -n 's/.*username=\(@[^ ]*\).*/\1/p' <<<"$ACCT")
+for d in "${ACCOUNTS[@]+"${ACCOUNTS[@]}"}"; do
+  # лише для акаунта, який ще підключаємо: готові (у розкладі) не чіпаємо
+  [ "$d" != "$DIR" ] && ! in_cron "$DIR" && [ -n "$USERNAME" ] && grep -qxF "BRAND=$USERNAME" "$d/.env" 2>/dev/null || continue
+  say "$USERNAME уже підключений в іншій папці ($d). Два підключення одного акаунта — подвійні пости і бан."
+  echo "  Тут потрібен ІНШИЙ акаунт розсилки. Виходжу з цього входу — запусти майстер ще раз"
+  echo "  і увійди в інший акаунт (на телефоні перемкнись на нього перед QR-кодом)."
+  venv/bin/python login_phone.py --logout >/dev/null 2>&1 || true
+  exit 1
+done
 while [ -z "$USERNAME" ] || [ "$USERNAME" = "@no_username" ]; do
   echo "  У акаунта розсилки нема імені користувача (@...). Воно потрібне, щоб ти його знайшов."
-  echo "  На телефоні в акаунті розсилки: Налаштування → Ім'я користувача → придумай і збережи."
+  echo "  На телефоні в акаунті розсилки: Налаштування → Ім'я користувача (рос.: Настройки → Имя пользователя) → придумай і збережи."
   pause "Коли зберіг — натисни Enter..."
-  ACCT=$(venv/bin/python check_account.py)
+  acct
   USERNAME=$(sed -n 's/.*username=\(@[^ ]*\).*/\1/p' <<<"$ACCT")
 done
 ok "вхід виконано: $USERNAME"
@@ -268,35 +286,59 @@ fi
 ok "Telegram Premium є"
 
 say "Крок 4/6. Зв'язок з тобою"
-echo "  Зі свого ОСОБИСТОГО акаунта напиши акаунту розсилки ($USERNAME) будь-яке слово,"
-echo "  наприклад «старт». Без цього Telegram не дасть йому надсилати тобі сповіщення."
-while :; do
+rc=0; venv/bin/python wizard_check.py owner >/dev/null 2>&1 || rc=$?   # повторний запуск: уже писав — не просимо знову
+[ $rc = 0 ] || {
+  echo "  У Telegram (не в цьому вікні!) зі свого ОСОБИСТОГО акаунта напиши акаунту розсилки"
+  echo "  $USERNAME будь-яке слово, наприклад «старт»: https://t.me/${USERNAME#@}"
+  echo "  Без цього Telegram не дасть йому надсилати тобі сповіщення."; }
+while [ $rc != 0 ]; do
   pause "Коли написав — натисни Enter..."
   rc=0; venv/bin/python wizard_check.py owner || rc=$?
   [ $rc = 0 ] && { ok "бачу твоє повідомлення"; break; }
   [ $rc = 3 ] && { echo "  Не вдалось перевірити (зв'язок із Telegram). Спробуй ще раз через хвилину."; continue; }
-  [ $rc = 2 ] && { echo "  Ти вказав id самого акаунта розсилки, а треба свій особистий."
-                   echo "  Введи правильний — свій особистий id від @userinfobot:"
-                   ask OWNER '^[0-9]{5,15}$'; setenv OWNER_ID "$OWNER"; continue; }
-  echo "  Ще не бачу повідомлення від тебе. Перевір, що пишеш саме $USERNAME,"
-  echo "  і що твій id від @userinfobot записаний правильно."
+  if [ $rc = 2 ]; then
+    echo "  Твій особистий id збігається з акаунтом, у який увійшов майстер."
+    if ! in_cron "$DIR"; then   # готовий акаунт з розкладу не розлогінюємо
+      echo "  Якщо на кроці входу ти увійшов у СВІЙ ОСОБИСТИЙ акаунт замість акаунта розсилки —"
+      echo "  напиши «вийти»: майстер вийде з нього, і ти увійдеш в акаунт розсилки заново."
+    fi
+    echo "  Якщо ти ввів id акаунта розсилки — напиши «id» і введи свій особистий id від @userinfobot."
+    read -r -p "  > " a </dev/tty; a=${a//[[:space:]]/}
+    if ! in_cron "$DIR" && [[ $a =~ ^(вийти|Вийти|выйти|Выйти|logout)$ ]]; then
+      venv/bin/python login_phone.py --logout >/dev/null 2>&1 || true
+      setenv BRAND ""   # ім'я особистого акаунта не має лишитись у сповіщеннях
+      echo "  Вийшов. Запускаю вхід заново."
+      exec 8>&- 7>&-; NEXT=1 exec bash "$SELF"
+    fi
+    [[ $a =~ ^(id|Id|ID|ід|Ід|ид|Ид|шв)$ ]] && ask_owner
+    rc=1; continue
+  fi
+  echo "  Ще не бачу повідомлення від тебе. Перевір, що пишеш у Telegram саме $USERNAME"
+  echo "  і саме зі свого особистого акаунта, а твій id від @userinfobot записаний правильно."
   read -r -p "  Enter — перевірити ще раз;  напиши 'id' — ввести свій id заново: " a </dev/tty
-  [[ $a == id || $a == ід || $a == ID ]] && ask_owner
+  a=${a//[[:space:]]/}
+  [[ $a =~ ^(id|Id|ID|ід|Ід|ид|Ид|шв)$ ]] && ask_owner
+  rc=1
 done
 
 say "Крок 5/6. Тексти оголошення"
-echo "  З телефону відкрий у акаунті розсилки чат «Збережені» (Saved Messages) і надішли"
-echo "  собі СПОЧАТКУ текст B, ПОТІМ текст A — двома окремими повідомленнями."
-echo "  Зразки: $REPO/tree/main/texts"
+SAVED="«Збережені» (рос.: «Избранное», Saved Messages)"
+first=1
 while :; do
+  rc=0; out=$(venv/bin/python wizard_check.py saved 2>&1) || rc=$?
+  if [ $rc = 0 ]; then
+    echo "  Ось що розсилка надсилатиме (два найновіші повідомлення в $SAVED):"; echo "$out"
+    read -r -p "  Це твої оголошення? (так/ні) " yn </dev/tty; yn=${yn//[[:space:]]/}
+    [[ $yn =~ ^(так|Так|ТАК|да|Да|ДА|y|Y|yes|Yes|YES|т|Т|д|Д|1|nfr|lf|ок|Ок|ОК|ok|Ok|OK|\+)$ ]] && break
+    echo "  Тоді надішли собі в $SAVED правильні тексти: спочатку B, потім A."
+  elif [ $rc = 3 ]; then echo "  Немає зв'язку з Telegram — спробуємо ще раз."
+  elif [ $first = 1 ]; then
+    echo "  З телефону відкрий в акаунті розсилки чат $SAVED і надішли собі"
+    echo "  СПОЧАТКУ текст B, ПОТІМ текст A — двома окремими повідомленнями."
+    echo "  Зразки: $REPO/tree/main/texts"
+  else echo "  Поки бачу менше двох повідомлень у $SAVED. Надішли тексти (спочатку B, потім A)."; fi
+  [ $rc = 3 ] || first=0
   pause "Коли надіслав — натисни Enter..."
-  echo "  Ось що розсилка надсилатиме (два найновіші повідомлення):"
-  if ! venv/bin/python wizard_check.py saved; then
-    echo "  Потрібно два повідомлення в «Збережених». Надішли тексти (спочатку B, потім A)."; continue
-  fi
-  read -r -p "  Це твої оголошення? (так/ні, або y/n) " yn </dev/tty
-  [[ $yn =~ ^(так|Так|ТАК|да|Да|y|Y|yes|Yes|т|д|1|nfr)$ ]] && break
-  echo "  Тоді надішли собі у «Збережені» правильні тексти (спочатку B, потім A)."
 done
 ok "тексти на місці"
 if [ -f leads_seen.json ]; then
@@ -328,12 +370,15 @@ fi
 [ -f join.log ] && { echo "  Як іде вступ у групи (останні рядки):"; grep "вступив\|зупинено\|ПРОЙДЕНО" join.log | tail -2 | sed 's/^/    /' || true; }
 exec 6>/tmp/.tg-broadcast-cron.lock; flock -w 60 6 || true
 { crontab -l 2>/dev/null | grep -vF "$DIR/join_step.sh # tg-join-temp" || true
-  echo "7 * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
+  # акаунти вступають у різні хвилини (7, 27, 47), а не всі разом з однієї адреси
+  n=1; [[ ${DIR##*/} =~ ^broadcast-([0-9]+)$ ]] && n=$((10#${BASH_REMATCH[1]}))
+  echo "$(( (7 + (n - 1) * 20) % 60 )) * * * * bash $DIR/join_step.sh # tg-join-temp"; } | crontab -
 exec 6>&-
 tell joining   # ще під замком акаунта: вступ у групи працює з тим самим входом
 flock -u 8; exec 8>&-   # відпускаємо акаунт, щоб вступ у групи міг почати одразу
 # 7>&- : вступ у групи йде годинами — він не повинен тримати замок майстра (інакше наступний запуск «уже запущено»).
-if [ "${NO_JOIN_NOW:-}" != 1 ]; then nohup bash join_step.sh >/dev/null 2>&1 7>&- & fi
+# повторна перевірка під час вступу: партія цієї години вже була — не додаємо зайву (вдвічі швидший вступ = ризик)
+if [ "${NO_JOIN_NOW:-}" != 1 ] && [ -z "$(find join.log -mmin -60 2>/dev/null)" ]; then nohup bash join_step.sh >/dev/null 2>&1 7>&- & fi
 ok "вступ у групи запущено"
 
 say "Готово!"
