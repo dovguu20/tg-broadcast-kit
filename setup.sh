@@ -213,6 +213,7 @@ else
   echo "  Зараз попросить: номер акаунта розсилки (+380...), потім код, потім хмарний пароль."
   echo "  Код зазвичай приходить у сам Telegram на телефоні з цим акаунтом; куди саме —"
   echo "  програма напише нижче (Telegram / SMS / дзвінок). Символи не видно — це нормально."
+  echo "  Код не приходить — замість коду напиши qr: увійдеш QR-кодом з телефона, без коду."
   until venv/bin/python login_phone.py --login </dev/tty 2>&1 | tee /tmp/broadcast-login.log \
           | { grep --line-buffered '"delivery_selected"' || true; } | sed -u \
             -e 's/.*"delivery": "SentCodeTypeApp".*/  → Код прийде в Telegram (чат «Telegram» на телефоні)./' \
@@ -225,7 +226,11 @@ else
     if grep -q 'ApiIdInvalid\|Invalid TELEGRAM_API' $L; then echo "  Помилка в api_id чи api_hash — введи їх заново (напиши 'ключі')."
     elif grep -q 'invalid_phone_format' $L; then echo "  Номер треба вводити з плюсом і кодом країни, без пробілів: +380501234567."
     elif grep -q 'PhoneNumberInvalid\|PhoneNumberBanned\|PhoneNumberUnoccupied' $L; then echo "  Telegram не приймає цей номер. Перевір номер акаунта розсилки."
-    elif grep -q 'PhoneCodeInvalid\|PhoneCodeExpired\|code_not_received' $L; then echo "  Код неправильний або застарів. Спробуй ще раз — прийде новий."
+    elif grep -q 'code_not_received' $L; then
+      echo "  Код не прийшов. Це відомий збій Telegram: коди для таких програм часто не доходять."
+      echo "  Увійди без коду, QR-кодом з телефона: напиши qr."
+    elif grep -q 'qr_timeout' $L; then echo "  QR-код не відсканували (5 хвилин) або хмарний пароль тричі не той. Напиши qr ще раз."
+    elif grep -q 'PhoneCodeInvalid\|PhoneCodeExpired' $L; then echo "  Код неправильний або застарів. Спробуй ще раз — прийде новий."
     elif grep -q 'PasswordHashInvalid' $L; then echo "  Неправильний хмарний пароль акаунта розсилки."
     elif grep -q 'rate_limited' $L; then echo "  Telegram просить почекати $(grep -o 'retry_after_seconds": [0-9]*' $L | grep -o '[0-9]*$' | tail -1) секунд перед новою спробою."
     elif grep -q 'окремого підтримуваного\|unsupported_auth_response' $L; then
@@ -233,8 +238,16 @@ else
       echo "  Зроби скрін цього вікна і надішли Максу."; exit 1
     elif grep -q 'вже запущено' $L; then echo "  Вхід уже запущено в іншому вікні — закрий його."
     else echo "  Деталі:"; tail -2 $L | sed 's/^/    /'; fi
-    read -r -p "  Enter — спробувати ще раз;  'ключі' (або k) — ввести api_id і api_hash заново: " a </dev/tty
+    read -r -p "  Enter — спробувати ще раз;  'qr' — увійти QR-кодом з телефона;  'ключі' (або k) — ввести api_id і api_hash заново: " a </dev/tty
+    a=${a//[[:space:]]/}
     [[ $a == ключі || $a == ключи || $a == keys || $a == k || $a == K ]] && ask_keys
+    # QR — без фільтра виводу: код малюється в stdout. Удалось — наступний --login бачить вхід і пропускає.
+    if [[ $a =~ ^(qr|QR|Qr|кр|КР|йк|ЙК)$ ]]; then
+      until venv/bin/python login_phone.py --qr </dev/tty; do
+        read -r -p "  QR не спрацював. Enter — новий QR-код;  'код' — назад до входу кодом: " b </dev/tty
+        [[ ${b//[[:space:]]/} =~ ^(код|Код|code|kod)$ ]] && break
+      done
+    fi
   done
 fi
 ACCT=$(venv/bin/python check_account.py)

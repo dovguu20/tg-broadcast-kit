@@ -187,6 +187,88 @@ async def hidden(prompt):
         raise LoginInputError()
 
 
+QR_WORDS = ("qr", "кр", "йк")   # «qr» і він же, набраний у кириличній розкладці
+
+
+_TTY = None
+
+
+def tty_out():
+    """Майстер фільтрує stdout --login (лишає лише рядок про доставку коду) — QR і підказки пишемо прямо в термінал."""
+    global _TTY
+    if _TTY is None:
+        try:
+            _TTY = open("/dev/tty", "w", encoding="utf-8")
+        except OSError:
+            _TTY = sys.stdout
+    return _TTY
+
+
+def show_qr(url, out=None):
+    """QR у терміналі чорним по білому явними кольорами — однаково читається на темному й світлому тлі.
+    Півблок «▀»: верхній модуль — колір символу, нижній — тло, тож код удвічі нижчий."""
+    import qrcode
+    out = out or tty_out()
+    q = qrcode.QRCode(border=2)
+    q.add_data(url)
+    m = q.get_matrix()   # True — темний модуль
+    out.write("\033[2J\033[H")   # чистий екран: новий код замість старого, а не під ним
+    for y in range(0, len(m), 2):
+        bottom = m[y + 1] if y + 1 < len(m) else [False] * len(m[y])
+        out.write("".join(f"\033[{30 if t else 97};{40 if b else 107}m▀" for t, b in zip(m[y], bottom)) + "\033[0m\n")
+    out.write("На ТЕЛЕФОНІ з акаунтом розсилки: Налаштування → Пристрої → Підключити пристрій\n"
+              "(рос.: Настройки → Устройства → Подключить устройство) і наведи камеру на код.\n"
+              "Код сам оновлюється кожні 30 секунд, чекаю до 5 хвилин — не поспішай.\n")
+    out.flush()
+
+
+async def ask_password(client, tries=3):
+    """Хмарний пароль після QR. Він прихований, помилитись легко — кілька спроб, а не вихід."""
+    for _ in range(tries):
+        try:
+            await client.sign_in(password=await hidden("Хмарний пароль (прихований): "))
+            return True
+        except errors.PasswordHashInvalidError:
+            tty_out().write("Пароль не той. Спробуй ще раз.\n")
+    return False
+
+
+async def qr_login(client):
+    """Вхід без коду (Telegram з кінця 2025 часто не доставляє код у сторонні програми — SentCodeTypeApp без коду)."""
+    out = tty_out()
+    out.write("\nВхід QR-кодом. Спершу підготуй телефон, тоді покажу код:\n"
+              "  1. Візьми ТЕЛЕФОН, де відкритий саме акаунт розсилки (не твій особистий).\n"
+              "  2. Telegram → Налаштування → Пристрої → Підключити пристрій\n"
+              "     (рос.: Настройки → Устройства → Подключить устройство). Відкриється камера.\n")
+    out.flush()
+    await hidden("Камера відкрита? Натисни Enter — QR-код з'явиться одразу: ")
+    try:
+        qr = await client.qr_login()
+    except errors.SessionPasswordNeededError:   # код уже відскановано минулого разу, лишився пароль
+        return await ask_password(client)
+    for _ in range(10):
+        show_qr(qr.url, out)
+        try:
+            await qr.wait(timeout=30)
+            return True
+        except errors.SessionPasswordNeededError:
+            return await ask_password(client)
+        except asyncio.TimeoutError:
+            pass
+        # Відсканували в останню секунду: новий експорт уже не дає токена, а каже, що вхід відбувся.
+        try:
+            await qr.recreate()
+        except errors.SessionPasswordNeededError:
+            return await ask_password(client)
+        resp = qr._resp   # ponytail: приватне поле Telethon 1.45 (версія закріплена в requirements)
+        if isinstance(resp, types.auth.LoginTokenMigrateTo):   # як у QRLogin.wait()
+            await client._switch_dc(resp.dc_id)
+            resp = await client(functions.auth.ImportLoginTokenRequest(resp.token))
+        if isinstance(resp, types.auth.LoginTokenSuccess):
+            return True
+    return False
+
+
 async def finish_sign_in(client, pending, code, password, save_pending_fn):
     """Повернути (event, pending_or_None, extra). pending_or_None=None — файл більше не потрібен.
 
@@ -338,8 +420,16 @@ async def run(mode="check", resend=False, base=BASE):
                 record(base, session, event, **extra)
                 return _exit_for(event)
 
+            if mode == "qr" and not authorized:
+                if not await qr_login(client):
+                    record(base, session, "qr_timeout")
+                    return 2
+                me = await client.get_me()
+                record(base, session, "authorized" if me else "login_not_confirmed",
+                       premium=bool(me and me.premium))
+                return 0 if me else 2
             # --login: інтерактивний шлях майстра. Секрети тільки через getpass.
-            if not authorized:
+            if not authorized and mode == "login":
                 phone = re.sub(r"[\s()-]", "", await hidden(
                     "Номер у форматі +кодкраїни… (прихований): "))
                 if not re.fullmatch(r"\+[1-9][0-9]{6,14}", phone):
@@ -370,7 +460,15 @@ async def run(mode="check", resend=False, base=BASE):
                         print("Цей спосіб потребує окремого підтримуваного процесу входу; зупинено.")
                         return 2
                     code = (await hidden(
-                        "Код (прихований; Enter без коду — завершити): ")).strip()
+                        "Код (прихований). Не приходить — напиши qr і натисни Enter: ")).strip()
+                    if code.lower() in QR_WORDS:
+                        if not await qr_login(client):
+                            record(base, session, "qr_timeout")
+                            return 2
+                        me = await client.get_me()
+                        record(base, session, "authorized" if me else "login_not_confirmed",
+                               premium=bool(me and me.premium))
+                        return 0 if me else 2
                     if not code:
                         record(base, session, "code_not_received",
                                delivery=type(sent.type).__name__)
@@ -404,6 +502,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--login", action="store_true",
                         help="інтерактивний вхід у терміналі (getpass)")
+    parser.add_argument("--qr", action="store_true",
+                        help="інтерактивний вхід QR-кодом з телефона (коли код не приходить)")
     parser.add_argument("--send-code", action="store_true",
                         help="надіслати код; номер у TELEGRAM_PHONE або JSON зі stdin")
     parser.add_argument("--sign-in", action="store_true",
@@ -411,15 +511,17 @@ def main(argv=None):
     parser.add_argument("--resend", action="store_true",
                         help="разом із --send-code: надіслати новий код, навіть якщо попередній ще висить")
     args = parser.parse_args(argv)
-    chosen = sum(1 for flag in (args.login, args.send_code, args.sign_in) if flag)
+    chosen = sum(1 for flag in (args.login, args.qr, args.send_code, args.sign_in) if flag)
     if chosen > 1:
-        print("Обери один режим: --login або --send-code або --sign-in.")
+        print("Обери один режим: --login, --qr, --send-code або --sign-in.")
         return 2
     if args.resend and not args.send_code:
         print("--resend лише разом із --send-code.")
         return 2
     if args.login:
         mode = "login"
+    elif args.qr:
+        mode = "qr"
     elif args.send_code:
         mode = "send-code"
     elif args.sign_in:

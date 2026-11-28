@@ -530,8 +530,69 @@ def test_join_pause() -> None:
     print("ok join pause")
 
 
+def test_qr_login() -> None:
+    """Вхід QR-кодом, коли Telegram не доставляє код (сирий/145 курсу): оновлює код, питає 2FA, здається за 10 спроб."""
+    import io
+    out = io.StringIO()
+    login_phone.show_qr("tg://login?token=AAAA", out=out)
+    assert "\033[30;107m▀" in out.getvalue() and "Підключити пристрій" in out.getvalue(), "чорні модулі на білому тлі"
+
+    from telethon import errors as terr, types as ttypes
+
+    class QR:
+        def __init__(self, script, recreate=None):
+            self.script, self.recreated, self.url, self._resp = list(script), 0, "tg://login?token=x", None
+            self.on_recreate = recreate
+        async def wait(self, timeout=None):
+            step = self.script.pop(0)
+            if step: raise step
+        async def recreate(self):
+            self.recreated += 1
+            if isinstance(self.on_recreate, Exception): raise self.on_recreate
+            self._resp = self.on_recreate
+
+    class Client:
+        def __init__(self, qr, bad_passwords=0, export_error=None):
+            self.qr, self.password, self.bad, self.export_error = qr, None, bad_passwords, export_error
+        async def qr_login(self):
+            if self.export_error: raise self.export_error
+            return self.qr
+        async def sign_in(self, password=None):
+            if self.bad:
+                self.bad -= 1
+                raise terr.PasswordHashInvalidError(None)
+            self.password = password
+
+    real_show, real_hidden = login_phone.show_qr, login_phone.hidden
+    login_phone.show_qr = lambda url, out=None: None
+    async def fake_hidden(prompt): return PASSWORD_SECRET
+    login_phone.hidden = fake_hidden
+    run = lambda c: asyncio.run(login_phone.qr_login(c))
+    pw = lambda: SessionPasswordNeededError(None)
+    try:
+        qr = QR([asyncio.TimeoutError(), None])
+        assert run(Client(qr)) is True and qr.recreated == 1, "протух — новий код"
+        c = Client(QR([pw()]))
+        assert run(c) is True and c.password == PASSWORD_SECRET, "2FA після сканування"
+        assert run(Client(QR([asyncio.TimeoutError()] * 10))) is False, "5 хвилин — здаємось"
+        # скан в останню секунду: wait уже здався, а новий експорт каже «вхід відбувся»
+        assert run(Client(QR([asyncio.TimeoutError()], recreate=ttypes.auth.LoginTokenSuccess(authorization=None)))) is True
+        c = Client(QR([asyncio.TimeoutError()], recreate=pw()))
+        assert run(c) is True and c.password == PASSWORD_SECRET, "останню секунду + 2FA — питаємо пароль"
+        c = Client(QR([pw()]), bad_passwords=2)
+        assert run(c) is True and c.password == PASSWORD_SECRET, "двічі помилився паролем — третя спроба"
+        assert run(Client(QR([pw()]), bad_passwords=3)) is False, "тричі не той — вихід, а не цикл"
+        c = Client(None, export_error=pw())
+        assert run(c) is True and c.password == PASSWORD_SECRET, "повторний запуск: QR уже відскановано, лишився пароль"
+    finally:
+        login_phone.show_qr, login_phone.hidden = real_show, real_hidden
+    assert login_phone.main(["--qr", "--login"]) == 2, "один режим"
+    print("ok qr login")
+
+
 def main() -> None:
     test_decisions()
+    test_qr_login()
     test_join_pause()
     test_owner_messages()
     test_unsupported_delivery()
